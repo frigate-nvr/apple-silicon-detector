@@ -1,0 +1,4 @@
+numpy==1.26.*
+onnxruntime==1.22.*
+pyzmq==26.2.*
+pydantic==2.10.*
