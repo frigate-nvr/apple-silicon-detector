@@ -22,6 +22,8 @@ import numpy as np
 import onnxruntime as ort
 import zmq
 
+from .. import post_process_yolo
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -92,16 +94,9 @@ class ZmqOnnxClient:
             if providers is None:
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
             
-            # Set default session options if none specified
-            if session_options is None:
-                session_options = ort.SessionOptions()
-                session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                session_options.intra_op_num_threads = 1
-            
             logger.info(f"Loading ONNX model with providers: {providers}")
             session = ort.InferenceSession(
                 self.model_path,
-                sess_options=session_options,
                 providers=providers
             )
             
@@ -173,26 +168,10 @@ class ZmqOnnxClient:
             input_data = {input_name: tensor.astype(np.float32)}
             
             # Run inference
-            start_time = time.time()
             outputs = self.session.run(None, input_data)
-            inference_time = time.time() - start_time
-            
-            logger.debug(f"Inference completed in {inference_time:.3f}s")
-            
+                        
             # Get the first output (assuming single output model)
-            result = outputs[0]
-            
-            # Ensure result has the expected shape [20, 6]
-            if result.shape != (20, 6):
-                logger.warning(f"Unexpected output shape: {result.shape}, reshaping to (20, 6)")
-                if result.size >= 120:  # 20 * 6
-                    result = result.flatten()[:120].reshape(20, 6)
-                else:
-                    # Pad with zeros if too small
-                    padded = np.zeros((20, 6), dtype=np.float32)
-                    if result.size > 0:
-                        padded.flat[:result.size] = result.flat
-                    result = padded
+            result = post_process_yolo(outputs, 320, 320)
             
             # Ensure float32 dtype
             result = result.astype(np.float32)
