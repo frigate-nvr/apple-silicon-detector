@@ -16,6 +16,7 @@ import json
 import logging
 import sys
 import time
+import os
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
@@ -56,9 +57,13 @@ class ZmqOnnxClient:
         self.endpoint = endpoint
         self.model_path = model_path
         
+        # Ensure IPC directory exists
+        self._ensure_ipc_directory()
+        
         # Initialize ZMQ context and socket
-        self.context = zmq.Context.instance()
-        self.socket = self.context.socket(zmq.REP)
+        self.context = None
+        self.socket = None
+        self._initialize_zmq()
         
         # Initialize ONNX Runtime session
         self.session = self._initialize_onnx_session(providers, session_options)
@@ -69,6 +74,79 @@ class ZmqOnnxClient:
         logger.info(f"ZMQ ONNX client initialized with endpoint: {endpoint}")
         if self.model_path:
             logger.info(f"ONNX model loaded from: {self.model_path}")
+    
+    def _ensure_ipc_directory(self):
+        """Ensure the IPC directory exists."""
+        if self.endpoint.startswith("ipc://"):
+            # Extract path from ipc:///path format
+            ipc_path = self.endpoint[6:]  # Remove "ipc://" prefix
+            
+            # Handle relative paths by resolving them
+            if ipc_path.startswith("../"):
+                # Resolve relative path from current working directory
+                import os
+                current_dir = os.getcwd()
+                resolved_path = os.path.normpath(os.path.join(current_dir, ipc_path))
+                ipc_dir = resolved_path
+            else:
+                # Absolute path
+                ipc_dir = ipc_path
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(ipc_dir), exist_ok=True)
+            logger.info(f"Ensured IPC directory exists: {os.path.dirname(ipc_dir)}")
+            logger.info(f"Full IPC path: {ipc_dir}")
+    
+    def _initialize_zmq(self):
+        """Initialize ZMQ context and socket with proper error handling."""
+        try:
+            # Clean up any existing resources
+            self.cleanup()
+            
+            # Create new context
+            self.context = zmq.Context.instance()
+            logger.debug("ZMQ context created successfully")
+            
+            # Create new socket
+            self.socket = self.context.socket(zmq.REP)
+            logger.debug("ZMQ REP socket created successfully")
+            
+            # Set socket options
+            self.socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second receive timeout
+            self.socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 second send timeout
+            self.socket.setsockopt(zmq.LINGER, 0)  # Don't wait for unsent messages on close
+            logger.debug("ZMQ socket options set successfully")
+            
+            logger.debug("ZMQ context and socket initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize ZMQ: {e}")
+            self.cleanup()
+            raise
+    
+    def _reset_socket(self):
+        """Reset the socket when encountering state issues."""
+        try:
+            logger.info("Resetting ZMQ socket due to state issues")
+            
+            # Close existing socket
+            if self.socket:
+                self.socket.close()
+                self.socket = None
+            
+            # Create new socket
+            self.socket = self.context.socket(zmq.REP)
+            self.socket.setsockopt(zmq.RCVTIMEO, 5000)
+            self.socket.setsockopt(zmq.SNDTIMEO, 5000)
+            self.socket.setsockopt(zmq.LINGER, 0)
+            
+            # Rebind to endpoint
+            self.socket.bind(self.endpoint)
+            logger.info("Socket reset and rebound successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to reset socket: {e}")
+            raise
     
     def _initialize_onnx_session(
         self,
@@ -223,12 +301,17 @@ class ZmqOnnxClient:
         Start the ZMQ server and listen for requests.
         """
         try:
+            # Log the exact endpoint being used
+            logger.info(f"Attempting to bind to endpoint: {self.endpoint}")
+            
+            # Bind socket to endpoint
             self.socket.bind(self.endpoint)
-            logger.info(f"ZMQ server bound to {self.endpoint}")
+            logger.info(f"ZMQ server successfully bound to {self.endpoint}")
             
             while True:
                 try:
                     # Receive request
+                    logger.debug("Waiting for request...")
                     frames = self.socket.recv_multipart()
                     logger.debug(f"Received request with {len(frames)} frames")
                     
@@ -240,43 +323,34 @@ class ZmqOnnxClient:
                     
                     # Build and send response
                     response = self._build_response(result)
+                    logger.debug("Sending response...")
                     self.socket.send_multipart(response)
                     
                     logger.debug("Response sent successfully")
                     
                 except zmq.ZMQError as e:
-                    logger.error(f"ZMQ error: {e}")
-                    # Send error response
-                    error_header = {
-                        "shape": [20, 6],
-                        "dtype": "float32",
-                        "error": str(e)
-                    }
-                    error_response = [
-                        json.dumps(error_header).encode("utf-8"),
-                        self.zero_result.tobytes(order="C")
-                    ]
-                    try:
-                        self.socket.send_multipart(error_response)
-                    except:
-                        pass
+                    error_msg = str(e)
+                    logger.error(f"ZMQ error: {error_msg}")
+                    
+                    # Handle specific ZMQ errors
+                    if "Resource temporarily unavailable" in error_msg:
+                        logger.info("Resource temporarily unavailable, continuing...")
+                        continue
+                    elif "Operation cannot be accomplished in current state" in error_msg:
+                        logger.info("Socket state issue, resetting socket...")
+                        try:
+                            self._reset_socket()
+                            continue
+                        except Exception as reset_error:
+                            logger.error(f"Failed to reset socket: {reset_error}")
+                            break
+                    else:
+                        # Send error response for other ZMQ errors
+                        self._send_error_response(str(e))
                         
                 except Exception as e:
                     logger.error(f"Unexpected error: {e}")
-                    # Send error response
-                    error_header = {
-                        "shape": [20, 6],
-                        "dtype": "float32",
-                        "error": str(e)
-                    }
-                    error_response = [
-                        json.dumps(error_header).encode("utf-8"),
-                        self.zero_result.tobytes(order="C")
-                    ]
-                    try:
-                        self.socket.send_multipart(error_response)
-                    except:
-                        pass
+                    self._send_error_response(str(e))
                         
         except KeyboardInterrupt:
             logger.info("Shutting down server...")
@@ -285,13 +359,31 @@ class ZmqOnnxClient:
         finally:
             self.cleanup()
     
+    def _send_error_response(self, error_msg: str):
+        """Send an error response to the client."""
+        try:
+            error_header = {
+                "shape": [20, 6],
+                "dtype": "float32",
+                "error": error_msg
+            }
+            error_response = [
+                json.dumps(error_header).encode("utf-8"),
+                self.zero_result.tobytes(order="C")
+            ]
+            self.socket.send_multipart(error_response)
+        except Exception as send_error:
+            logger.error(f"Failed to send error response: {send_error}")
+    
     def cleanup(self):
         """Clean up resources."""
         try:
             if self.socket:
                 self.socket.close()
+                self.socket = None
             if self.context:
                 self.context.term()
+                self.context = None
             logger.info("Cleanup completed")
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
