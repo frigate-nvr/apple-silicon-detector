@@ -1,4 +1,11 @@
-numpy==1.26.*
+# Image Manipulation
+numpy == 1.26.*
+opencv-python-headless == 4.11.0.*
+opencv-contrib-python == 4.11.0.*
+
+# Object Detection
 onnxruntime==1.22.*
+
+# Communication
 pyzmq==26.2.*
 pydantic==2.10.*

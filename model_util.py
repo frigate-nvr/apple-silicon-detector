@@ -1,14 +1,10 @@
 """Model Utils"""
 
 import logging
-import os
 from typing import Any
 
 import cv2
 import numpy as np
-import onnxruntime as ort
-
-from frigate.const import MODEL_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -278,89 +274,3 @@ def post_process_yolox(
         ]
 
     return detections
-
-
-### ONNX Utilities
-
-
-def get_ort_providers(
-    force_cpu: bool = False, device: str = "AUTO", requires_fp16: bool = False
-) -> tuple[list[str], list[dict[str, Any]]]:
-    if force_cpu:
-        return (
-            ["CPUExecutionProvider"],
-            [
-                {
-                    "enable_cpu_mem_arena": False,
-                }
-            ],
-        )
-
-    providers = []
-    options = []
-
-    for provider in ort.get_available_providers():
-        if provider == "CUDAExecutionProvider":
-            device_id = 0 if not device.isdigit() else int(device)
-            providers.append(provider)
-            options.append(
-                {
-                    "arena_extend_strategy": "kSameAsRequested",
-                    "device_id": device_id,
-                }
-            )
-        elif provider == "TensorrtExecutionProvider":
-            # TensorrtExecutionProvider uses too much memory without options to control it
-            # so it is not enabled by default
-            if device == "Tensorrt":
-                os.makedirs(
-                    os.path.join(MODEL_CACHE_DIR, "tensorrt/ort/trt-engines"),
-                    exist_ok=True,
-                )
-                device_id = 0 if not device.isdigit() else int(device)
-                providers.append(provider)
-                options.append(
-                    {
-                        "device_id": device_id,
-                        "trt_fp16_enable": requires_fp16
-                        and os.environ.get("USE_FP_16", "True") != "False",
-                        "trt_timing_cache_enable": True,
-                        "trt_engine_cache_enable": True,
-                        "trt_timing_cache_path": os.path.join(
-                            MODEL_CACHE_DIR, "tensorrt/ort"
-                        ),
-                        "trt_engine_cache_path": os.path.join(
-                            MODEL_CACHE_DIR, "tensorrt/ort/trt-engines"
-                        ),
-                    }
-                )
-            else:
-                continue
-        elif provider == "OpenVINOExecutionProvider":
-            os.makedirs(os.path.join(MODEL_CACHE_DIR, "openvino/ort"), exist_ok=True)
-            providers.append(provider)
-            options.append(
-                {
-                    "cache_dir": os.path.join(MODEL_CACHE_DIR, "openvino/ort"),
-                    "device_type": device,
-                }
-            )
-        elif provider == "MIGraphXExecutionProvider":
-            # MIGraphX uses more CPU than ROCM, while also being the same speed
-            if device == "MIGraphX":
-                providers.append(provider)
-                options.append({})
-            else:
-                continue
-        elif provider == "CPUExecutionProvider":
-            providers.append(provider)
-            options.append(
-                {
-                    "enable_cpu_mem_arena": False,
-                }
-            )
-        else:
-            providers.append(provider)
-            options.append({})
-
-    return (providers, options)
