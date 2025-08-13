@@ -96,6 +96,14 @@ class ZmqOnnxClient:
             os.makedirs(os.path.dirname(ipc_dir), exist_ok=True)
             logger.info(f"Ensured IPC directory exists: {os.path.dirname(ipc_dir)}")
             logger.info(f"Full IPC path: {ipc_dir}")
+            
+            # Remove existing socket file if it exists (orphaned socket)
+            if os.path.exists(ipc_dir) and os.path.getsize(ipc_dir) == 0:
+                try:
+                    os.unlink(ipc_dir)
+                    logger.info(f"Removed orphaned socket file: {ipc_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not remove orphaned socket: {e}")
     
     def _initialize_zmq(self):
         """Initialize ZMQ context and socket with proper error handling."""
@@ -104,7 +112,7 @@ class ZmqOnnxClient:
             self.cleanup()
             
             # Create new context
-            self.context = zmq.Context.instance()
+            self.context = zmq.Context()
             logger.debug("ZMQ context created successfully")
             
             # Create new socket
@@ -334,7 +342,6 @@ class ZmqOnnxClient:
                     
                     # Handle specific ZMQ errors
                     if "Resource temporarily unavailable" in error_msg:
-                        logger.info("Resource temporarily unavailable, continuing...")
                         continue
                     elif "Operation cannot be accomplished in current state" in error_msg:
                         logger.info("Socket state issue, resetting socket...")
