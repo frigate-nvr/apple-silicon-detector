@@ -243,6 +243,9 @@ class ZmqOnnxClient:
             
         Returns:
             Detection results as numpy array
+            
+        Raises:
+            RuntimeError: If no ONNX session is available or inference fails
         """
         if self.session is None:
             logger.warning("No ONNX session available, returning zero results")
@@ -353,6 +356,7 @@ class ZmqOnnxClient:
                             break
                     else:
                         # Send error response for other ZMQ errors
+                        logger.error(f"sending an error response {e}")
                         self._send_error_response(str(e))
                         
                 except Exception as e:
