@@ -23,7 +23,7 @@ import numpy as np
 import onnxruntime as ort
 import zmq
 
-from model_util import post_process_yolo
+from detector.model_util import post_process_yolo
 
 # Configure logging
 logging.basicConfig(
