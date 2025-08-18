@@ -1,7 +1,6 @@
 """Model Utils"""
 
 import logging
-from typing import Any
 
 import cv2
 import numpy as np
