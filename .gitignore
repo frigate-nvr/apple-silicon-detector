@@ -1,5 +1,4 @@
-bin/*
-lib/*
+venv/*
 models/*
 pyvenv.cfg
 __pycache__
