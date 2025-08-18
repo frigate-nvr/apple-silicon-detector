@@ -239,12 +239,13 @@ class ZmqOnnxClient:
             logger.error(f"Failed to decode request: {e}")
             raise
 
-    def _run_inference(self, tensor: np.ndarray) -> np.ndarray:
+    def _run_inference(self, tensor: np.ndarray, header: dict) -> np.ndarray:
         """
         Run ONNX inference on the input tensor.
 
         Args:
             tensor: Input tensor
+            header: Request header containing metadata (e.g., shape, layout)
 
         Returns:
             Detection results as numpy array
@@ -262,10 +263,28 @@ class ZmqOnnxClient:
             input_data = {input_name: tensor.astype(np.float32)}
 
             # Run inference
+            if logger.isEnabledFor(logging.DEBUG):
+                t_start = time.perf_counter()
+
             outputs = self.session.run(None, input_data)
+            
+            if logger.isEnabledFor(logging.DEBUG):
+                t_after_onnx = time.perf_counter()
+
+            # Determine input spatial size (W, H) from header/shape/layout
+            width, height = self._extract_input_hw(header)
 
             # Get the first output (assuming single output model)
-            result = post_process_yolo(outputs, 320, 320)
+            result = post_process_yolo(outputs, width, height)
+
+            if logger.isEnabledFor(logging.DEBUG):
+                t_after_post = time.perf_counter()
+                onnx_ms = (t_after_onnx - t_start) * 1000.0
+                post_ms = (t_after_post - t_after_onnx) * 1000.0
+                total_ms = (t_after_post - t_start) * 1000.0
+                logger.debug(
+                    f"Inference timing: onnx={onnx_ms:.2f}ms, post={post_ms:.2f}ms, total={total_ms:.2f}ms"
+                )
 
             # Ensure float32 dtype
             result = result.astype(np.float32)
@@ -275,6 +294,60 @@ class ZmqOnnxClient:
         except Exception as e:
             logger.error(f"ONNX inference failed: {e}")
             return self.zero_result
+
+    def _extract_input_hw(self, header: dict) -> Tuple[int, int]:
+        """
+        Extract (width, height) from the header and/or tensor shape, supporting
+        NHWC/NCHW as well as 3D/4D inputs. Falls back to 320x320 if unknown.
+
+        Preference order:
+        1) Explicit header keys: width/height
+        2) Use provided layout to interpret shape
+        3) Heuristics on shape
+        """
+        try:
+            if "width" in header and "height" in header:
+                return int(header["width"]), int(header["height"])
+
+            shape = tuple(header.get("shape", []))
+            layout = header.get("layout") or header.get("order")
+
+            if layout and shape:
+                layout = str(layout).upper()
+                if len(shape) == 4:
+                    if layout == "NCHW":
+                        return int(shape[3]), int(shape[2])
+                    if layout == "NHWC":
+                        return int(shape[2]), int(shape[1])
+                if len(shape) == 3:
+                    if layout == "CHW":
+                        return int(shape[2]), int(shape[1])
+                    if layout == "HWC":
+                        return int(shape[1]), int(shape[0])
+
+            if shape:
+                if len(shape) == 4:
+                    _, d1, d2, d3 = shape
+                    if d1 in (1, 3):
+                        return int(d3), int(d2)
+                    if d3 in (1, 3):
+                        return int(d2), int(d1)
+                    return int(d2), int(d1)
+                if len(shape) == 3:
+                    d0, d1, d2 = shape
+                    if d0 in (1, 3):
+                        return int(d2), int(d1)
+                    if d2 in (1, 3):
+                        return int(d1), int(d0)
+                    return int(d1), int(d0)
+                if len(shape) == 2:
+                    h, w = shape
+                    return int(w), int(h)
+        except Exception as e:
+            logger.debug(f"Failed to extract input size from header: {e}")
+
+        logger.debug("Falling back to default input size (320x320)")
+        return 320, 320
 
     def _build_response(self, result: np.ndarray) -> List[bytes]:
         """
@@ -335,7 +408,7 @@ class ZmqOnnxClient:
                     tensor, header = self._decode_request(frames)
 
                     # Run inference
-                    result = self._run_inference(tensor)
+                    result = self._run_inference(tensor, header)
 
                     # Build and send response
                     response = self._build_response(result)
@@ -346,10 +419,10 @@ class ZmqOnnxClient:
 
                 except zmq.ZMQError as e:
                     error_msg = str(e)
-                    logger.error(f"ZMQ error: {error_msg}")
 
                     # Handle specific ZMQ errors
                     if "Resource temporarily unavailable" in error_msg:
+                        logger.error("ZMQ error: Unable to communicate with Frigate")
                         continue
                     elif (
                         "Operation cannot be accomplished in current state" in error_msg
