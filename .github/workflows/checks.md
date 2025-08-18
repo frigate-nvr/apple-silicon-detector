@@ -1,6 +1,9 @@
 name: On pull request
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     paths-ignore:
       - "docs/**"
