@@ -1,4 +1,4 @@
-# ZMQ IPC ONNX Runtime Client
+# Apple Silicon Detector
 
 This Python client connects to the ZMQ IPC proxy, accepts tensor inputs, runs inference via ONNX Runtime, and returns detection results in the format expected by the Frigate detector.
 
