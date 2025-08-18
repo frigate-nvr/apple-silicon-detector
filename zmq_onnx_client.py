@@ -353,10 +353,10 @@ class ZmqOnnxClient:
                     
                 except zmq.ZMQError as e:
                     error_msg = str(e)
-                    logger.error(f"ZMQ error: {error_msg}")
                     
                     # Handle specific ZMQ errors
                     if "Resource temporarily unavailable" in error_msg:
+                        logger.error("ZMQ error: No Frigate server found")
                         continue
                     elif "Operation cannot be accomplished in current state" in error_msg:
                         logger.info("Socket state issue, resetting socket...")
