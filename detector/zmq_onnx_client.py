@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-ZMQ IPC ONNX Runtime Client
+ZMQ TCP ONNX Runtime Client
 
-This client connects to the ZMQ IPC proxy, accepts tensor inputs,
+This client connects to the ZMQ TCP proxy, accepts tensor inputs,
 runs inference via ONNX Runtime, and returns detection results.
 
 Protocol:
@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 
 class ZmqOnnxClient:
     """
-    ZMQ IPC client that runs ONNX inference on received tensors.
+    ZMQ TCP client that runs ONNX inference on received tensors.
     """
 
     def __init__(
         self,
-        endpoint: str = "ipc:///tmp/cache/zmq_detector",
+        endpoint: str = "tcp://*:5555",
         model_path: Optional[str] = None,
         providers: Optional[List[str]] = None,
         session_options: Optional[ort.SessionOptions] = None,
@@ -48,16 +48,13 @@ class ZmqOnnxClient:
         Initialize the ZMQ ONNX client.
 
         Args:
-            endpoint: ZMQ IPC endpoint to bind to
+            endpoint: ZMQ TCP endpoint to bind to
             model_path: Path to ONNX model file
             providers: ONNX Runtime execution providers
             session_options: ONNX Runtime session options
         """
         self.endpoint = endpoint
         self.model_path = model_path
-
-        # Ensure IPC directory exists
-        self._ensure_ipc_directory()
 
         # Initialize ZMQ context and socket
         self.context = None
@@ -73,37 +70,6 @@ class ZmqOnnxClient:
         logger.info(f"ZMQ ONNX client initialized with endpoint: {endpoint}")
         if self.model_path:
             logger.info(f"ONNX model loaded from: {self.model_path}")
-
-    def _ensure_ipc_directory(self):
-        """Ensure the IPC directory exists."""
-        if self.endpoint.startswith("ipc://"):
-            # Extract path from ipc:///path format
-            ipc_path = self.endpoint[6:]  # Remove "ipc://" prefix
-
-            # Handle relative paths by resolving them
-            if ipc_path.startswith("../"):
-                # Resolve relative path from current working directory
-                import os
-
-                current_dir = os.getcwd()
-                resolved_path = os.path.normpath(os.path.join(current_dir, ipc_path))
-                ipc_dir = resolved_path
-            else:
-                # Absolute path
-                ipc_dir = ipc_path
-
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(ipc_dir), exist_ok=True)
-            logger.info(f"Ensured IPC directory exists: {os.path.dirname(ipc_dir)}")
-            logger.info(f"Full IPC path: {ipc_dir}")
-
-            # Remove existing socket file if it exists (orphaned socket)
-            if os.path.exists(ipc_dir) and os.path.getsize(ipc_dir) == 0:
-                try:
-                    os.unlink(ipc_dir)
-                    logger.info(f"Removed orphaned socket file: {ipc_dir}")
-                except Exception as e:
-                    logger.warning(f"Could not remove orphaned socket: {e}")
 
     def _initialize_zmq(self):
         """Initialize ZMQ context and socket with proper error handling."""
@@ -267,7 +233,7 @@ class ZmqOnnxClient:
                 t_start = time.perf_counter()
 
             outputs = self.session.run(None, input_data)
-            
+
             if logger.isEnabledFor(logging.DEBUG):
                 t_after_onnx = time.perf_counter()
 
@@ -480,11 +446,11 @@ def main():
     """Main function to run the ZMQ ONNX client."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="ZMQ IPC ONNX Runtime Client")
+    parser = argparse.ArgumentParser(description="ZMQ TCP ONNX Runtime Client")
     parser.add_argument(
         "--endpoint",
-        default="ipc:///tmp/cache/zmq_detector",
-        help="ZMQ IPC endpoint (default: ipc:///tmp/cache/zmq_detector)",
+        default="tcp://*:5555",
+        help="ZMQ TCP endpoint (default: tcp://*:5555)",
     )
     parser.add_argument("--model", help="Path to ONNX model file")
     parser.add_argument(

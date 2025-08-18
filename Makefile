@@ -25,7 +25,7 @@ install: venv
 	$(PIP) install -r requirements.txt
 
 run: venv
-	$(PY) zmq_onnx_client.py $(if $(MODEL),--model $(MODEL),) $(if $(ENDPOINT),--endpoint $(ENDPOINT),) $(if $(PROVIDERS),--providers $(PROVIDERS),) $(if $(VERBOSE),-v,)
+	$(PY) detector/zmq_onnx_client.py $(if $(MODEL),--model $(MODEL),) $(if $(ENDPOINT),--endpoint $(ENDPOINT),) $(if $(PROVIDERS),--providers $(PROVIDERS),) $(if $(VERBOSE),-v,)
 
 reinstall: clean install
 
