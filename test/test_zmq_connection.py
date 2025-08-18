@@ -4,7 +4,6 @@ Simple ZMQ connection test script to verify connectivity.
 """
 
 import zmq
-import time
 import json
 import numpy as np
 import logging
@@ -67,7 +66,7 @@ def test_zmq_server(endpoint="ipc:///tmp/cache/zmq_detector"):
         try:
             socket.close()
             context.term()
-        except:
+        except Exception:
             pass
 
 
