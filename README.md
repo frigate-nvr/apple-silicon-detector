@@ -10,133 +10,44 @@ This Python client connects to the ZMQ IPC proxy, accepts tensor inputs, runs in
 - **Error Handling**: Robust error handling with fallback to zero results
 - **Flexible Configuration**: Configurable endpoints, model paths, and execution providers
 
-## Installation
-
-### 1. Create and Activate Virtual Environment
-
-First, create a virtual environment to isolate dependencies:
+## Setup (via Makefile)
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
+# Create local venv and install dependencies
+make install
 
-# Activate virtual environment
-# On macOS/Linux:
-source venv/bin/activate
-
-# On Windows:
-# venv\Scripts\activate
+# Optional: verify ONNX Runtime is available
+venv/bin/python3 -c "import onnxruntime; print('ONNX Runtime version:', onnxruntime.__version__)"
 ```
 
-### 2. Install Dependencies
+## Virtual Environment
 
-With the virtual environment activated, install the required dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Verify Installation
-
-Ensure you have an ONNX model file ready for inference and verify the installation:
-
-```bash
-# Check if virtual environment is active (should show venv path)
-which python
-
-# Verify ONNX Runtime is installed
-python -c "import onnxruntime; print('ONNX Runtime version:', onnxruntime.__version__)"
-```
-
-**Note**: Always activate the virtual environment before running the client or installing additional packages.
-
-## Virtual Environment Management
-
-### Activating the Environment
-
-Every time you open a new terminal or want to work with this project:
-
-```bash
-# Navigate to project directory
-cd /path/to/apple-silicon-frigate-detector
-
-# Activate virtual environment
-source venv/bin/activate
-
-# Your prompt should now show (venv) indicating the environment is active
-```
-
-### Deactivating the Environment
-
-When you're done working with the project:
-
-```bash
-deactivate
-```
-
-### Updating Dependencies
-
-To update packages in your virtual environment:
-
-```bash
-# Ensure virtual environment is active
-source venv/bin/activate
-
-# Update pip first
-pip install --upgrade pip
-
-# Update specific packages
-pip install --upgrade package_name
-
-# Or update all packages (use with caution)
-pip list --outdated | cut -d ' ' -f1 | xargs -n1 pip install -U
-```
-
-### Recreating the Environment
-
-If you need to recreate the virtual environment:
-
-```bash
-# Remove old environment
-rm -rf venv
-
-# Create new environment
-python3 -m venv venv
-
-# Activate and install dependencies
-source venv/bin/activate
-pip install -r requirements.txt
-```
+- The Makefile manages `venv/` and uses `venv/bin/python3` and `venv/bin/pip3` directly.
+- If you prefer to activate manually (optional): `source venv/bin/activate`
+- Recreate the environment: `make reinstall` (removes `venv/` and reinstalls)
 
 ## Usage
 
-### Command Line Interface
+### Make targets
 
-**Important**: Make sure your virtual environment is activated before running any commands:
-
+Run the client with a model:
 ```bash
-# Activate virtual environment (if not already active)
-source venv/bin/activate
+make run MODEL=/path/to/your/model.onnx
 ```
 
-Run the client with basic settings:
+Custom endpoint (examples include TCP):
 ```bash
-python zmq_onnx_client.py --model /path/to/your/model.onnx
+make run MODEL=/path/to/your/model.onnx ENDPOINT="tcp://*:5555"
 ```
 
-Run with custom endpoint:
+Specific execution providers:
 ```bash
-python zmq_onnx_client.py --model /path/to/your/model.onnx --endpoint ipc:///tmp/custom_endpoint
-```
-
-Run with specific execution providers:
-```bash
-python zmq_onnx_client.py --model /path/to/your/model.onnx --providers CoreMLExecutionProvider CPUExecutionProvider
+make run MODEL=/path/to/your/model.onnx PROVIDERS="CoreMLExecutionProvider CPUExecutionProvider"
 ```
 
 Enable verbose logging:
 ```bash
-python zmq_onnx_client.py --model /path/to/your/model.onnx --verbose
+make run MODEL=/path/to/your/model.onnx VERBOSE=1
 ```
 
 ### Programmatic Usage
@@ -146,7 +57,7 @@ from zmq_onnx_client import ZmqOnnxClient
 
 # Create client instance
 client = ZmqOnnxClient(
-    endpoint="ipc:///tmp/cache/zmq_detector",
+    endpoint="tcp://*:5555",
     model_path="/path/to/your/model.onnx",
     providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
 )
@@ -172,8 +83,8 @@ The client implements the same protocol as the Frigate ZMQ detector:
 ## Configuration
 
 ### Endpoints
-- **Default**: `ipc:///tmp/cache/zmq_detector`
-- **Custom**: Any valid ZMQ IPC endpoint
+- **Examples**: `tcp://*:5555`, 
+- **Custom**: Any valid ZMQ endpoint (TCP)
 
 ### Execution Providers
 - **CoreMLExecutionProvider**: Optimized for Apple Silicon (default)
@@ -215,7 +126,7 @@ The client includes comprehensive error handling:
 
 Enable verbose logging to see detailed operation information:
 ```bash
-python zmq_onnx_client.py --model /path/to/model.onnx --verbose
+make run MODEL=/path/to/model.onnx VERBOSE=1
 ```
 
 ### Logs
