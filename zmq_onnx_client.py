@@ -257,10 +257,22 @@ class ZmqOnnxClient:
             input_data = {input_name: tensor.astype(np.float32)}
             
             # Run inference
+            if logger.isEnabledFor(logging.DEBUG):
+                t_start = time.perf_counter()
             outputs = self.session.run(None, input_data)
+            if logger.isEnabledFor(logging.DEBUG):
+                t_after_onnx = time.perf_counter()
                         
             # Get the first output (assuming single output model)
             result = post_process_yolo(outputs, 320, 320)
+            if logger.isEnabledFor(logging.DEBUG):
+                t_after_post = time.perf_counter()
+                onnx_ms = (t_after_onnx - t_start) * 1000.0
+                post_ms = (t_after_post - t_after_onnx) * 1000.0
+                total_ms = (t_after_post - t_start) * 1000.0
+                logger.debug(
+                    f"Inference timing: onnx={onnx_ms:.2f}ms, post={post_ms:.2f}ms, total={total_ms:.2f}ms"
+                )
             
             # Ensure float32 dtype
             result = result.astype(np.float32)

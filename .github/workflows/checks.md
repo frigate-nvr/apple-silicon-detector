@@ -31,7 +31,7 @@ jobs:
           python3 -m pip install ruff
       - name: Check formatting
         run: |
-          ruff format --check --diff frigate migrations docker *.py
+          ruff format --check --diff detector test *.py
       - name: Check lint
         run: |
           ruff check frigate migrations docker *.py
