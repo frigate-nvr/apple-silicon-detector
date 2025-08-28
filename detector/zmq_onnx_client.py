@@ -10,6 +10,9 @@ Protocol:
 - Header contains shape and dtype information
 - Runs ONNX inference on the tensor
 - Returns results in the expected format: [20, 6] float32 array
+
+Note: Timeouts are normal when Frigate has no motion to detect.
+The server will continue running and waiting for requests.
 """
 
 import json
@@ -364,7 +367,7 @@ class ZmqOnnxClient:
             while True:
                 try:
                     # Receive request
-                    logger.debug("Waiting for request...")
+                    logger.debug("Waiting for detection request from Frigate...")
                     frames = self.socket.recv_multipart()
                     logger.debug(f"Received request with {len(frames)} frames")
 
@@ -386,7 +389,7 @@ class ZmqOnnxClient:
 
                     # Handle specific ZMQ errors
                     if "Resource temporarily unavailable" in error_msg:
-                        logger.error("ZMQ error: Unable to communicate with Frigate")
+                        logger.debug("ZMQ heartbeat: Unable to communicate with Frigate")
                         continue
                     elif (
                         "Operation cannot be accomplished in current state" in error_msg
@@ -400,7 +403,7 @@ class ZmqOnnxClient:
                             break
                     else:
                         # Send error response for other ZMQ errors
-                        logger.error(f"sending an error response {e}")
+                        logger.error(f"ZMQ error: {e}")
                         self._send_error_response(str(e))
 
                 except Exception as e:
