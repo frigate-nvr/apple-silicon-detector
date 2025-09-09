@@ -24,7 +24,7 @@ import numpy as np
 import onnxruntime as ort
 import zmq
 
-from model_util import post_process_yolo
+from model_util import post_process_yolo, post_process_rfdetr
 
 # Configure logging
 logging.basicConfig(
@@ -239,10 +239,13 @@ class ZmqOnnxClient:
                 t_after_onnx = time.perf_counter()
 
             # Determine input spatial size (W, H) from header/shape/layout
+            model_type = header.get("model_type")
             width, height = self._extract_input_hw(header)
 
-            # Get the first output (assuming single output model)
-            result = post_process_yolo(outputs, width, height)
+            if model_type == "yolo-generic":
+                result = post_process_yolo(outputs, width, height)
+            elif model_type == "rfdetr":
+                result = post_process_rfdetr(outputs)
 
             if logger.isEnabledFor(logging.DEBUG):
                 t_after_post = time.perf_counter()
@@ -389,7 +392,9 @@ class ZmqOnnxClient:
 
                     # Handle specific ZMQ errors
                     if "Resource temporarily unavailable" in error_msg:
-                        logger.debug("ZMQ heartbeat: Unable to communicate with Frigate")
+                        logger.debug(
+                            "ZMQ heartbeat: Unable to communicate with Frigate"
+                        )
                         continue
                     elif (
                         "Operation cannot be accomplished in current state" in error_msg
