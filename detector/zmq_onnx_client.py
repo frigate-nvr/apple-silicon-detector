@@ -24,7 +24,7 @@ import numpy as np
 import onnxruntime as ort
 import zmq
 
-from model_util import post_process_yolo, post_process_rfdetr
+from model_util import post_process_yolo, post_process_rfdetr, post_process_dfine
 
 # Configure logging
 logging.basicConfig(
@@ -226,8 +226,21 @@ class ZmqOnnxClient:
 
         try:
             # Prepare input for ONNX Runtime
-            input_name = self.session.get_inputs()[0].name
-            input_data = {input_name: tensor.astype(np.float32)}
+            # Determine input spatial size (W, H) from header/shape/layout
+            model_type = header.get("model_type")
+            width, height = self._extract_input_hw(header)
+
+            if model_type == "dfine":
+                # DFine model requires both images and orig_target_sizes inputs
+                width, height = self._extract_input_hw(header)
+                input_data = {
+                    "images": tensor.astype(np.float32),
+                    "orig_target_sizes": np.array([[height, width]], dtype=np.int64),
+                }
+            else:
+                # Other models use single input
+                input_name = self.session.get_inputs()[0].name
+                input_data = {input_name: tensor.astype(np.float32)}
 
             # Run inference
             if logger.isEnabledFor(logging.DEBUG):
@@ -238,12 +251,10 @@ class ZmqOnnxClient:
             if logger.isEnabledFor(logging.DEBUG):
                 t_after_onnx = time.perf_counter()
 
-            # Determine input spatial size (W, H) from header/shape/layout
-            model_type = header.get("model_type")
-            width, height = self._extract_input_hw(header)
-
             if model_type == "yolo-generic":
                 result = post_process_yolo(outputs, width, height)
+            elif model_type == "dfine":
+                result = post_process_dfine(outputs, width, height)
             elif model_type == "rfdetr":
                 result = post_process_rfdetr(outputs)
 
