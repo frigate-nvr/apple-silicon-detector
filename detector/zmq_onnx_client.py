@@ -147,7 +147,7 @@ class ZmqOnnxClient:
         try:
             # Set default providers for Apple Silicon if none specified
             if providers is None:
-                providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+                providers = ["CoreMLExecutionProvider"]
 
             logger.info(f"Loading ONNX model with providers: {providers}")
             session = ort.InferenceSession(self.model_path, providers=providers)
@@ -232,7 +232,6 @@ class ZmqOnnxClient:
 
             if model_type == "dfine":
                 # DFine model requires both images and orig_target_sizes inputs
-                width, height = self._extract_input_hw(header)
                 input_data = {
                     "images": tensor.astype(np.float32),
                     "orig_target_sizes": np.array([[height, width]], dtype=np.int64),
@@ -240,7 +239,7 @@ class ZmqOnnxClient:
             else:
                 # Other models use single input
                 input_name = self.session.get_inputs()[0].name
-                input_data = {input_name: tensor.astype(np.float32)}
+                input_data = {input_name: tensor}
 
             # Run inference
             if logger.isEnabledFor(logging.DEBUG):
@@ -251,7 +250,7 @@ class ZmqOnnxClient:
             if logger.isEnabledFor(logging.DEBUG):
                 t_after_onnx = time.perf_counter()
 
-            if model_type == "yolo-generic":
+            if model_type == "yolo-generic" or model_type == "yologeneric":
                 result = post_process_yolo(outputs, width, height)
             elif model_type == "dfine":
                 result = post_process_dfine(outputs, width, height)
@@ -473,7 +472,7 @@ def main():
     parser.add_argument(
         "--providers",
         nargs="+",
-        default=["CoreMLExecutionProvider", "CPUExecutionProvider"],
+        default=["CoreMLExecutionProvider"],
         help="ONNX Runtime execution providers",
     )
     parser.add_argument(
