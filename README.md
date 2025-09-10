@@ -66,6 +66,17 @@ client = ZmqOnnxClient(
 client.start_server()
 ```
 
+## Supported Models
+
+The following models are supported by this detector:
+
+| Apple Silicon Chip | YOLOv9      | RF-DETR         | D-FINE        |
+| -------------------| ----------- | --------------- | ------------- |
+| M1                 |             |                 |               |
+| M2                 |             |                 |               |
+| M3                 | 320-t: 8 ms | 320-Nano: 80 ms | 640-s: 120 ms |
+| M4                 |             |                 |               |
+
 ## Protocol
 
 The client implements the same protocol as the Frigate ZMQ detector:
