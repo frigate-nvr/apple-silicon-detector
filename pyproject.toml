@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apple-silicon-frigate-detector"
+version = "1.0.0"
+description = "Apple Silicon optimized ONNX detector for Frigate NVR"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Apple Silicon Frigate Detector Team"}
+]
+keywords = ["frigate", "onnx", "apple-silicon", "object-detection", "zmq"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Video",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26.0,<1.27.0",
+    "opencv-python-headless>=4.11.0,<4.12.0",
+    "opencv-contrib-python>=4.11.0,<4.12.0",
+    "onnxruntime>=1.22.0,<1.23.0",
+    "pyzmq>=26.2.0,<27.0.0",
+    "pydantic>=2.10.0,<3.0.0",
+]
+
+[project.optional-dependencies]
+gui = [
+    "tkinter",  # Usually included with Python
+    "pillow>=10.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-username/apple-silicon-frigate-detector"
+Repository = "https://github.com/your-username/apple-silicon-frigate-detector"
+Issues = "https://github.com/your-username/apple-silicon-frigate-detector/issues"
+
+[project.scripts]
+frigate-detector = "apple_silicon_frigate_detector.cli:main"
+frigate-detector-gui = "apple_silicon_frigate_detector.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["apple_silicon_frigate_detector*"]
+
+[tool.setuptools.package-data]
+"apple_silicon_frigate_detector" = ["*.txt", "*.md"]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88

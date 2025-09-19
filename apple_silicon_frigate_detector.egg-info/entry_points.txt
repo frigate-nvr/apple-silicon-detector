@@ -1,0 +1,3 @@
+[console_scripts]
+frigate-detector = apple_silicon_frigate_detector.cli:main
+frigate-detector-gui = apple_silicon_frigate_detector.gui:main

@@ -1,0 +1,15 @@
+LICENSE
+README.md
+pyproject.toml
+apple_silicon_frigate_detector/__init__.py
+apple_silicon_frigate_detector/cli.py
+apple_silicon_frigate_detector/gui.py
+apple_silicon_frigate_detector/model_util.py
+apple_silicon_frigate_detector/zmq_onnx_client.py
+apple_silicon_frigate_detector.egg-info/PKG-INFO
+apple_silicon_frigate_detector.egg-info/SOURCES.txt
+apple_silicon_frigate_detector.egg-info/dependency_links.txt
+apple_silicon_frigate_detector.egg-info/entry_points.txt
+apple_silicon_frigate_detector.egg-info/requires.txt
+apple_silicon_frigate_detector.egg-info/top_level.txt
+test/test_zmq_connection.py
