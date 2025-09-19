@@ -1,0 +1,164 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine pytest black ruff
+        
+    - name: Install package dependencies
+      run: |
+        pip install -e .[gui,dev]
+        
+    - name: Run tests
+      run: |
+        if [ -d "test" ]; then
+          python -m pytest test/ -v
+        else
+          echo "No tests found, skipping"
+        fi
+        
+    - name: Lint code
+      run: |
+        python -m ruff check apple_silicon_frigate_detector/ || true
+        python -m black --check apple_silicon_frigate_detector/ || true
+        
+    - name: Build package
+      run: |
+        python -m build
+        
+    - name: Validate package
+      run: |
+        python -m twine check dist/*
+        
+    - name: Create release assets
+      run: |
+        # Create a release directory
+        mkdir release-assets
+        
+        # Copy built packages
+        cp dist/* release-assets/
+        
+        # Copy installer scripts
+        cp install.sh release-assets/
+        cp install-online.sh release-assets/
+        
+        # Create checksums
+        cd release-assets
+        shasum -a 256 * > checksums.txt
+        
+    - name: Get version from tag
+      id: get_version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/v}
+        else
+          VERSION="dev-$(git rev-parse --short HEAD)"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag_name=v$VERSION" >> $GITHUB_OUTPUT
+        
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.tag_name }}
+        name: Apple Silicon Frigate Detector v${{ steps.get_version.outputs.version }}
+        body: |
+          ## 🚀 Apple Silicon Frigate Detector v${{ steps.get_version.outputs.version }}
+          
+          ### Quick Install (Recommended)
+          
+          **One-line installer:**
+          ```bash
+          curl -sSL https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.tag_name }}/install-online.sh | bash
+          ```
+          
+          **Or download and run:**
+          ```bash
+          wget https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.tag_name }}/install.sh
+          chmod +x install.sh
+          ./install.sh
+          ```
+          
+          ### What's Included
+          - ✅ Desktop shortcuts (GUI and CLI)
+          - ✅ Application bundle for macOS
+          - ✅ Virtual environment isolation
+          - ✅ Automatic dependency management
+          - ✅ Easy uninstaller
+          
+          ### Manual Installation
+          If you prefer pip:
+          ```bash
+          pip install apple-silicon-frigate-detector[gui]
+          ```
+          
+          ### Usage
+          After installation:
+          - **GUI**: Double-click "Frigate Detector (GUI).command" on Desktop
+          - **CLI**: `frigate-detector --model /path/to/your/model.onnx`
+          - **App**: Open "Frigate Detector.app" from Applications folder
+          
+          ### Requirements
+          - macOS 10.15 or later
+          - Python 3.10 or later
+          - Apple Silicon Mac (M1/M2/M3/M4) for optimal performance
+          
+          ---
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/...v${{ steps.get_version.outputs.version }}
+        files: |
+          release-assets/*
+        draft: false
+        prerelease: ${{ contains(steps.get_version.outputs.version, 'dev') }}
+        
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')  # Only publish to PyPI on version tags
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+        
+    - name: Build package
+      run: |
+        python -m build
+        
+    - name: Publish to PyPI
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: |
+        python -m twine upload dist/*
