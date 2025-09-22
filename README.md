@@ -1,6 +1,6 @@
-# Apple Silicon Detector
+# Apple Silicon Detector for Frigate
 
-This Python client connects to the ZMQ IPC proxy, accepts tensor inputs, runs inference via ONNX Runtime, and returns detection results in the format expected by the Frigate detector.
+An optimized object detection client for Frigate that leverages Apple Silicon's Neural Engine for high-performance inference using ONNX Runtime. Provides seamless integration with Frigate's ZMQ detector plugin.
 
 ## Features
 
@@ -10,61 +10,26 @@ This Python client connects to the ZMQ IPC proxy, accepts tensor inputs, runs in
 - **Error Handling**: Robust error handling with fallback to zero results
 - **Flexible Configuration**: Configurable endpoints, model paths, and execution providers
 
-## Setup (via Makefile)
+## Quick Start
 
+### 1. Install Dependencies
 ```bash
-# Create local venv and install dependencies
 make install
-
-# Optional: verify ONNX Runtime is available
-venv/bin/python3 -c "import onnxruntime; print('ONNX Runtime version:', onnxruntime.__version__)"
 ```
 
-## Virtual Environment
-
-- The Makefile manages `venv/` and uses `venv/bin/python3` and `venv/bin/pip3` directly.
-- If you prefer to activate manually (optional): `source venv/bin/activate`
-- Recreate the environment: `make reinstall` (removes `venv/` and reinstalls)
-
-## Usage
-
-### Make targets
-
-Run the client with a model:
+### 2. Run the Detector
 ```bash
-make run MODEL=/path/to/your/model.onnx
+make run
 ```
 
-Custom endpoint (examples include TCP):
-```bash
-make run MODEL=/path/to/your/model.onnx ENDPOINT="tcp://*:5555"
-```
+That's it! The detector will automatically use the configured model and start communicating with Frigate.
 
-Specific execution providers:
-```bash
-make run MODEL=/path/to/your/model.onnx PROVIDERS="CoreMLExecutionProvider CPUExecutionProvider"
-```
+## What's Included
 
-Enable verbose logging:
-```bash
-make run MODEL=/path/to/your/model.onnx VERBOSE=1
-```
-
-### Programmatic Usage
-
-```python
-from zmq_onnx_client import ZmqOnnxClient
-
-# Create client instance
-client = ZmqOnnxClient(
-    endpoint="tcp://*:5555",
-    model_path="/path/to/your/model.onnx",
-    providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
-)
-
-# Start the server
-client.start_server()
-```
+- **Model Loading**: Uses whatever model Frigate configures via its automatic model loading
+- **Apple Silicon Optimization**: Uses CoreML execution provider for maximum performance
+- **Frigate Integration**: Drop-in replacement for Frigate's built-in detectors
+- **Multiple Model Support**: YOLOv9, RF-DETR, D-FINE, and custom ONNX models
 
 ## Supported Models
 
@@ -77,35 +42,58 @@ The following models are supported by this detector:
 | M3                 | 320-t: 8 ms | 320-Nano: 80 ms | 640-s: 120 ms |
 | M4                 |             |                 |               |
 
-## Protocol
+### Model Configuration
+The detector uses the model that Frigate configures:
+1. Frigate automatically loads and configures the model via ZMQ
+2. The detector receives model information from Frigate's automatic model loading
+3. No manual model selection required - works with Frigate's existing model management
 
-The client implements the same protocol as the Frigate ZMQ detector:
+For implementation details, see the [detector README](detector/README.md).
 
-### Request Format
-- **Multipart message**: `[header_json_bytes, tensor_bytes]`
-- **Header**: JSON containing `shape` and `dtype` information
-- **Tensor**: Raw bytes of the numpy array in C-order
+## Virtual Environment Management
 
-### Response Format
-- **Multipart message**: `[header_json_bytes, tensor_bytes]`
-- **Header**: JSON containing result shape, dtype, and timestamp
-- **Result**: Detection results as float32 array with shape `[20, 6]`
+- The Makefile automatically manages `venv/` and uses `venv/bin/python3` and `venv/bin/pip3` directly
+- If you prefer to activate manually (optional): `source venv/bin/activate`
+- Recreate the environment: `make reinstall` (removes `venv/` and reinstalls)
+- Verify installation: `venv/bin/python3 -c "import onnxruntime; print('ONNX Runtime version:', onnxruntime.__version__)"`
 
-## Configuration
+## Advanced Configuration
 
-### Endpoints
-- **Examples**: `tcp://*:5555`, 
-- **Custom**: Any valid ZMQ endpoint (TCP)
+### Custom Model Selection
+```bash
+make run MODEL=/path/to/your/model.onnx
+```
 
-### Execution Providers
-- **CoreMLExecutionProvider**: Optimized for Apple Silicon (default)
-- **CPUExecutionProvider**: Fallback CPU execution
-- **Custom**: Any ONNX Runtime execution provider
+### Custom Endpoints
+```bash
+make run MODEL=/path/to/your/model.onnx ENDPOINT="tcp://*:5555"
+```
 
-### Model Requirements
-- Input: Should accept the tensor format sent by Frigate
-- Output: Should produce results that can be reshaped to `[20, 6]` float32
-- Format: Standard ONNX model file
+### Custom Execution Providers
+```bash
+make run MODEL=/path/to/your/model.onnx PROVIDERS="CoreMLExecutionProvider CPUExecutionProvider"
+```
+
+### Verbose Logging
+```bash
+make run MODEL=/path/to/your/model.onnx VERBOSE=1
+```
+
+### Programmatic Usage
+
+```python
+from detector.zmq_onnx_client import ZmqOnnxClient
+
+# Create client instance
+client = ZmqOnnxClient(
+    endpoint="tcp://*:5555",
+    model_path="/path/to/your/model.onnx",
+    providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
+)
+
+# Start the server
+client.start_server()
+```
 
 ## Error Handling
 
@@ -125,37 +113,26 @@ The client includes comprehensive error handling:
 ## Troubleshooting
 
 ### Common Issues
-
-1. **Virtual Environment Not Active**: Ensure you've activated the virtual environment with `source venv/bin/activate`
-2. **Permission Denied**: Ensure the IPC endpoint directory has proper permissions
-3. **Model Loading Failed**: Verify the ONNX model path and format
-4. **Provider Not Available**: Check ONNX Runtime installation and available providers
-5. **ZMQ Bind Failed**: Ensure the endpoint is not already in use
-6. **Package Not Found**: If you get import errors, make sure you're in the virtual environment and dependencies are installed
+- **Permission Denied**: Ensure the IPC endpoint directory has proper permissions (`/tmp/cache/`)
+- **Model Loading Failed**: Verify ONNX model files are in the `models/` directory
+- **ZMQ Bind Failed**: Ensure the endpoint is not already in use by another process
+- **Package Not Found**: Run `make reinstall` to recreate the virtual environment
 
 ### Debug Mode
-
-Enable verbose logging to see detailed operation information:
+Enable verbose logging for detailed operation information:
 ```bash
-make run MODEL=/path/to/model.onnx VERBOSE=1
+make run VERBOSE=1
 ```
-
-### Logs
-
-The client provides comprehensive logging:
-- Connection status
-- Request/response details
-- Inference timing
-- Error conditions
-- Resource cleanup
 
 ## Integration with Frigate
 
-This client is designed to work seamlessly with Frigate's ZMQ detector plugin:
+This detector works seamlessly with Frigate's ZMQ detector plugin:
 
-1. Start the ONNX client with your model
-2. Configure Frigate to use the ZMQ detector with the same endpoint
-3. The client will automatically handle all inference requests
+1. **Start the detector**: `make run`
+2. **Configure Frigate**: Add the ZMQ detector configuration (see Quick Start above)
+3. **Done**: Frigate automatically loads the model and the detector handles all inference requests
+
+For detailed implementation information, see the [detector documentation](detector/README.md).
 
 ## License
 
