@@ -17,6 +17,7 @@ The server will continue running and waiting for requests.
 
 import json
 import logging
+import os
 import time
 from typing import List, Optional, Tuple
 
@@ -40,8 +41,8 @@ class ZmqOnnxClient:
 
     def __init__(
         self,
-        endpoint: str = "tcp://*:5555",
-        model_path: Optional[str] = None,
+        endpoint: str = "ipc:///tmp/cache/zmq_detector",
+        model_path: Optional[str] = "AUTO",
         providers: Optional[List[str]] = None,
         session_options: Optional[ort.SessionOptions] = None,
     ):
@@ -49,13 +50,18 @@ class ZmqOnnxClient:
         Initialize the ZMQ ONNX client.
 
         Args:
-            endpoint: ZMQ TCP endpoint to bind to
-            model_path: Path to ONNX model file
+            endpoint: ZMQ IPC endpoint to bind to
+            model_path: Path to ONNX model file or "AUTO" for automatic model management
             providers: ONNX Runtime execution providers
             session_options: ONNX Runtime session options
         """
         self.endpoint = endpoint
         self.model_path = model_path
+        self.current_model = None
+        self.model_ready = False
+        self.models_dir = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "models"
+        )
 
         # Initialize ZMQ context and socket
         self.context = None
@@ -63,14 +69,20 @@ class ZmqOnnxClient:
         self._initialize_zmq()
 
         # Initialize ONNX Runtime session
-        self.session = self._initialize_onnx_session(providers, session_options)
+        self.session = None
+        if self.model_path != "AUTO":
+            self.session = self._initialize_onnx_session(providers, session_options)
 
         # Preallocate zero result for error cases
         self.zero_result = np.zeros((20, 6), dtype=np.float32)
 
         logger.info(f"ZMQ ONNX client initialized with endpoint: {endpoint}")
-        if self.model_path:
+        if self.model_path != "AUTO":
             logger.info(f"ONNX model loaded from: {self.model_path}")
+        else:
+            logger.info(
+                "ZMQ ONNX client started in AUTO mode - waiting for model requests"
+            )
 
     def _initialize_zmq(self):
         """Initialize ZMQ context and socket with proper error handling."""
@@ -168,6 +180,94 @@ class ZmqOnnxClient:
             logger.error(f"Failed to initialize ONNX session: {e}")
             return None
 
+    def _check_model_exists(self, model_name: str) -> bool:
+        """
+        Check if a model exists in the models directory.
+
+        Args:
+            model_name: Name of the model file to check
+
+        Returns:
+            True if model exists, False otherwise
+        """
+        model_path = os.path.join(self.models_dir, model_name)
+        return os.path.exists(model_path)
+
+    def _load_model(
+        self,
+        model_name: str,
+        providers: Optional[List[str]] = None,
+        session_options: Optional[ort.SessionOptions] = None,
+    ) -> bool:
+        """
+        Load a model from the models directory.
+
+        Args:
+            model_name: Name of the model file to load
+            providers: ONNX Runtime execution providers
+            session_options: ONNX Runtime session options
+
+        Returns:
+            True if model loaded successfully, False otherwise
+        """
+        try:
+            model_path = os.path.join(self.models_dir, model_name)
+            logger.info(f"Loading model from: {model_path}")
+
+            if providers is None:
+                providers = ["CoreMLExecutionProvider"]
+
+            self.session = ort.InferenceSession(model_path, providers=providers)
+            self.current_model = model_name
+            self.model_ready = True
+
+            input_info = self.session.get_inputs()[0]
+            output_info = self.session.get_outputs()[0]
+            logger.info(
+                f"Model loaded: {input_info.name}, shape: {input_info.shape}, type: {input_info.type}"
+            )
+            logger.info(
+                f"Model output: {output_info.name}, shape: {output_info.shape}, type: {output_info.type}"
+            )
+
+            # Small delay to ensure model is fully ready
+            time.sleep(0.1)
+            logger.info("Model ready for inference")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load model {model_name}: {e}")
+            return False
+
+    def _save_model(self, model_name: str, model_data: bytes) -> bool:
+        """
+        Save model data to the models directory.
+
+        Args:
+            model_name: Name of the model file to save
+            model_data: Binary model data
+
+        Returns:
+            True if model saved successfully, False otherwise
+        """
+        try:
+            # Ensure models directory exists
+            os.makedirs(self.models_dir, exist_ok=True)
+
+            model_path = os.path.join(self.models_dir, model_name)
+            logger.info(f"Saving model to: {model_path}")
+
+            with open(model_path, "wb") as f:
+                f.write(model_data)
+
+            logger.info(f"Model saved successfully: {model_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save model {model_name}: {e}")
+            return False
+
     def _decode_request(self, frames: List[bytes]) -> Tuple[np.ndarray, dict]:
         """
         Decode the incoming request frames.
@@ -179,27 +279,32 @@ class ZmqOnnxClient:
             Tuple of (tensor, header_dict)
         """
         try:
-            if len(frames) < 2:
-                raise ValueError(f"Expected 2 frames, got {len(frames)}")
+            if len(frames) < 1:
+                raise ValueError(f"Expected at least 1 frame, got {len(frames)}")
 
             # Parse header
             header_bytes = frames[0]
-            tensor_bytes = frames[1]
-
             header = json.loads(header_bytes.decode("utf-8"))
+
+            if "model_request" in header:
+                return None, header
+
+            if "model_data" in header:
+                if len(frames) < 2:
+                    raise ValueError(
+                        f"Model data request expected 2 frames, got {len(frames)}"
+                    )
+                return None, header
+
+            if len(frames) < 2:
+                raise ValueError(f"Tensor request expected 2 frames, got {len(frames)}")
+
+            tensor_bytes = frames[1]
             shape = tuple(header.get("shape", []))
             dtype_str = header.get("dtype", "uint8")
 
-            # Convert numpy dtype string to dtype object
             dtype = np.dtype(dtype_str)
-
-            # Reconstruct tensor
             tensor = np.frombuffer(tensor_bytes, dtype=dtype).reshape(shape)
-
-            logger.debug(
-                f"Received tensor: shape={shape}, dtype={dtype}, size={tensor.nbytes} bytes"
-            )
-
             return tensor, header
 
         except Exception as e:
@@ -365,6 +470,101 @@ class ZmqOnnxClient:
             result_bytes = self.zero_result.tobytes(order="C")
             return [header_bytes, result_bytes]
 
+    def _handle_model_request(self, header: dict) -> List[bytes]:
+        """
+        Handle model availability request.
+
+        Args:
+            header: Request header containing model information
+
+        Returns:
+            Response message indicating model availability
+        """
+        model_name = header.get("model_name")
+
+        if not model_name:
+            logger.error("Model request missing model_name")
+            return self._build_error_response("Model request missing model_name")
+
+        logger.info(f"Model availability request for: {model_name}")
+
+        if self._check_model_exists(model_name):
+            logger.info(f"Model {model_name} exists locally")
+            # Try to load the model
+            if self._load_model(model_name):
+                response_header = {
+                    "model_available": True,
+                    "model_loaded": True,
+                    "model_name": model_name,
+                    "message": f"Model {model_name} loaded successfully",
+                }
+            else:
+                response_header = {
+                    "model_available": True,
+                    "model_loaded": False,
+                    "model_name": model_name,
+                    "message": f"Model {model_name} exists but failed to load",
+                }
+        else:
+            logger.info(f"Model {model_name} not found, requesting transfer")
+            response_header = {
+                "model_available": False,
+                "model_name": model_name,
+                "message": f"Model {model_name} not found, please send model data",
+            }
+
+        return [json.dumps(response_header).encode("utf-8")]
+
+    def _handle_model_data(self, header: dict, model_data: bytes) -> List[bytes]:
+        """
+        Handle model data transfer.
+
+        Args:
+            header: Request header containing model information
+            model_data: Binary model data
+
+        Returns:
+            Response message indicating save success/failure
+        """
+        model_name = header.get("model_name")
+
+        if not model_name:
+            logger.error("Model data missing model_name")
+            return self._build_error_response("Model data missing model_name")
+
+        logger.info(f"Received model data for: {model_name}")
+
+        if self._save_model(model_name, model_data):
+            # Try to load the model
+            if self._load_model(model_name):
+                response_header = {
+                    "model_saved": True,
+                    "model_loaded": True,
+                    "model_name": model_name,
+                    "message": f"Model {model_name} saved and loaded successfully",
+                }
+            else:
+                response_header = {
+                    "model_saved": True,
+                    "model_loaded": False,
+                    "model_name": model_name,
+                    "message": f"Model {model_name} saved but failed to load",
+                }
+        else:
+            response_header = {
+                "model_saved": False,
+                "model_loaded": False,
+                "model_name": model_name,
+                "message": f"Failed to save model {model_name}",
+            }
+
+        return [json.dumps(response_header).encode("utf-8")]
+
+    def _build_error_response(self, error_msg: str) -> List[bytes]:
+        """Build an error response message."""
+        error_header = {"error": error_msg}
+        return [json.dumps(error_header).encode("utf-8")]
+
     def start_server(self):
         """
         Start the ZMQ server and listen for requests.
@@ -376,26 +576,43 @@ class ZmqOnnxClient:
             # Bind socket to endpoint
             self.socket.bind(self.endpoint)
             logger.info(f"ZMQ server successfully bound to {self.endpoint}")
+            logger.info(
+                "Detector is ready to accept model requests and inference requests"
+            )
 
             while True:
                 try:
-                    # Receive request
-                    logger.debug("Waiting for detection request from Frigate...")
                     frames = self.socket.recv_multipart()
-                    logger.debug(f"Received request with {len(frames)} frames")
-
-                    # Process request
                     tensor, header = self._decode_request(frames)
 
-                    # Run inference
-                    result = self._run_inference(tensor, header)
+                    if "model_request" in header:
+                        # Model availability check (1 frame) - only during initialization
+                        response = self._handle_model_request(header)
+                        self.socket.send_multipart(response)
+                    elif "model_data" in header and len(frames) >= 2:
+                        # Model data transfer (2 frames) - only during initialization
+                        model_data = frames[1]
+                        response = self._handle_model_data(header, model_data)
+                        self.socket.send_multipart(response)
+                    elif tensor is not None:
+                        # Regular inference request (2 frames) - always handle this
+                        if self.model_ready and self.session is not None:
+                            result = self._run_inference(tensor, header)
+                        else:
+                            result = self.zero_result
+                            if not self.model_ready:
+                                logger.debug(
+                                    "Model not ready, returning zero detections"
+                                )
 
-                    # Build and send response
-                    response = self._build_response(result)
-                    logger.debug("Sending response...")
-                    self.socket.send_multipart(response)
-
-                    logger.debug("Response sent successfully")
+                        response = self._build_response(result)
+                        self.socket.send_multipart(response)
+                    else:
+                        # Unknown request type - send zero detections instead of error
+                        logger.warning("Unknown request type, sending zero detections")
+                        result = self.zero_result
+                        response = self._build_response(result)
+                        self.socket.send_multipart(response)
 
                 except zmq.ZMQError as e:
                     error_msg = str(e)
@@ -468,7 +685,11 @@ def main():
         default="tcp://*:5555",
         help="ZMQ TCP endpoint (default: tcp://*:5555)",
     )
-    parser.add_argument("--model", help="Path to ONNX model file")
+    parser.add_argument(
+        "--model",
+        default="AUTO",
+        help="Path to ONNX model file or AUTO for automatic model management",
+    )
     parser.add_argument(
         "--providers",
         nargs="+",
