@@ -174,7 +174,9 @@ class ZmqOnnxClient:
                 if provider != "CoreMLExecutionProvider":
                     provider_options.append((provider, {}))
 
-            logger.info(f"Loading ONNX model with providers: {[p[0] for p in provider_options]}")
+            logger.info(
+                f"Loading ONNX model with providers: {[p[0] for p in provider_options]}"
+            )
             session = ort.InferenceSession(model_path, providers=provider_options)
 
             # Log model input/output info
