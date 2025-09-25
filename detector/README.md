@@ -64,8 +64,9 @@ When `model_path="AUTO"`, the detector works with Frigate's automatic model load
 
 ### Execution Providers
 - **CoreMLExecutionProvider**: Primary provider for Apple Silicon optimization
-  - Leverages Neural Engine when available
-  - Provides significant performance improvements
+  - Uses MLProgram format for optimal performance (requires iOS 15+ or macOS 12+)
+  - Leverages all available compute units (CPU, GPU, Neural Engine)
+  - Model caching enabled for faster subsequent loads
 - **CPUExecutionProvider**: Fallback for compatibility
   - Ensures functionality on all systems
   - Used when CoreML is unavailable
@@ -86,7 +87,7 @@ When errors occur, the detector returns:
 ## Performance Characteristics
 
 ### Apple Silicon Optimization
-- **M1/M2**: Basic CoreML support
+- **M1/M2**: Basic CoreML support with model caching
 - **M3**: Significant performance improvements
   - YOLOv9 320-t: ~8ms inference time
   - RF-DETR 320-Nano: ~80ms inference time

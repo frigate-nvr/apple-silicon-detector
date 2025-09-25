@@ -44,7 +44,6 @@ class ZmqOnnxClient:
         endpoint: str = "ipc:///tmp/cache/zmq_detector",
         model_path: Optional[str] = "AUTO",
         providers: Optional[List[str]] = None,
-        session_options: Optional[ort.SessionOptions] = None,
     ):
         """
         Initialize the ZMQ ONNX client.
@@ -71,7 +70,7 @@ class ZmqOnnxClient:
         # Initialize ONNX Runtime session
         self.session = None
         if self.model_path != "AUTO":
-            self.session = self._initialize_onnx_session(providers, session_options)
+            self.session = self._initialize_onnx_session(providers)
 
         # Preallocate zero result for error cases
         self.zero_result = np.zeros((20, 6), dtype=np.float32)
@@ -137,32 +136,48 @@ class ZmqOnnxClient:
             logger.error(f"Failed to reset socket: {e}")
             raise
 
-    def _initialize_onnx_session(
+    def _create_onnx_session(
         self,
+        model_path: str,
         providers: Optional[List[str]] = None,
-        session_options: Optional[ort.SessionOptions] = None,
     ) -> Optional[ort.InferenceSession]:
         """
-        Initialize ONNX Runtime session.
+        Create an ONNX Runtime session with CoreML optimizations.
 
         Args:
+            model_path: Path to the ONNX model file
             providers: Execution providers (e.g., ['CoreMLExecutionProvider', 'CPUExecutionProvider'])
             session_options: Session options
 
         Returns:
-            ONNX Runtime inference session or None if no model path
+            ONNX Runtime inference session or None if creation fails
         """
-        if not self.model_path:
-            logger.warning("No model path provided, ONNX inference will be skipped")
-            return None
-
         try:
-            # Set default providers for Apple Silicon if none specified
+            cache_dir = os.path.join(self.models_dir, "cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
             if providers is None:
                 providers = ["CoreMLExecutionProvider"]
 
-            logger.info(f"Loading ONNX model with providers: {providers}")
-            session = ort.InferenceSession(self.model_path, providers=providers)
+            # Configure CoreML EP with optimizations
+            provider_options = []
+            if "CoreMLExecutionProvider" in providers:
+                coreml_options = {
+                    "ModelFormat": "MLProgram",  # Use MLProgram format for better performance
+                    "MLComputeUnits": "ALL",  # Use all available compute units
+                    "ModelCacheDirectory": cache_dir,
+                }
+                provider_options.append(("CoreMLExecutionProvider", coreml_options))
+
+            # Add other providers without options
+            for provider in providers:
+                if provider != "CoreMLExecutionProvider":
+                    provider_options.append((provider, {}))
+
+            logger.info(
+                f"Loading ONNX model with providers: {[p[0] for p in provider_options]}"
+            )
+            session = ort.InferenceSession(model_path, providers=provider_options)
 
             # Log model input/output info
             input_info = session.get_inputs()[0]
@@ -177,8 +192,28 @@ class ZmqOnnxClient:
             return session
 
         except Exception as e:
-            logger.error(f"Failed to initialize ONNX session: {e}")
+            logger.error(f"Failed to create ONNX session: {e}")
             return None
+
+    def _initialize_onnx_session(
+        self,
+        providers: Optional[List[str]] = None,
+    ) -> Optional[ort.InferenceSession]:
+        """
+        Initialize ONNX Runtime session with CoreML optimizations.
+
+        Args:
+            providers: Execution providers (e.g., ['CoreMLExecutionProvider', 'CPUExecutionProvider'])
+            session_options: Session options
+
+        Returns:
+            ONNX Runtime inference session or None if no model path
+        """
+        if not self.model_path:
+            logger.warning("No model path provided, ONNX inference will be skipped")
+            return None
+
+        return self._create_onnx_session(self.model_path, providers)
 
     def _check_model_exists(self, model_name: str) -> bool:
         """
@@ -197,10 +232,9 @@ class ZmqOnnxClient:
         self,
         model_name: str,
         providers: Optional[List[str]] = None,
-        session_options: Optional[ort.SessionOptions] = None,
     ) -> bool:
         """
-        Load a model from the models directory.
+        Load a model from the models directory with CoreML optimizations.
 
         Args:
             model_name: Name of the model file to load
@@ -214,21 +248,12 @@ class ZmqOnnxClient:
             model_path = os.path.join(self.models_dir, model_name)
             logger.info(f"Loading model from: {model_path}")
 
-            if providers is None:
-                providers = ["CoreMLExecutionProvider"]
+            self.session = self._create_onnx_session(model_path, providers)
+            if self.session is None:
+                return False
 
-            self.session = ort.InferenceSession(model_path, providers=providers)
             self.current_model = model_name
             self.model_ready = True
-
-            input_info = self.session.get_inputs()[0]
-            output_info = self.session.get_outputs()[0]
-            logger.info(
-                f"Model loaded: {input_info.name}, shape: {input_info.shape}, type: {input_info.type}"
-            )
-            logger.info(
-                f"Model output: {output_info.name}, shape: {output_info.shape}, type: {output_info.type}"
-            )
 
             # Small delay to ensure model is fully ready
             time.sleep(0.1)
