@@ -12,17 +12,21 @@ An optimized object detection client for Frigate that leverages Apple Silicon's 
 
 ## Quick Start
 
-### 1. Install Dependencies
+### Option A: macOS App (no terminal required)
+1. Download the latest `FrigateDetector.app.zip` from the Releases page.
+2. Unzip it and open `FrigateDetector.app` (first run: right‑click → Open to bypass Gatekeeper).
+3. A Terminal window will appear and automatically:
+   - create a local `venv/`
+   - install dependencies
+   - start the detector with `--model AUTO`
+
+### Option B: Makefile
 ```bash
 make install
-```
-
-### 2. Run the Detector
-```bash
 make run
 ```
 
-That's it! The detector will automatically use the configured model and start communicating with Frigate.
+The detector will automatically use the configured model and start communicating with Frigate.
 
 ## What's Included
 
