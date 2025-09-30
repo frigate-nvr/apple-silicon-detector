@@ -30,8 +30,26 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
-PYBIN="python3.11"
-command -v "$PYBIN" >/dev/null 2>&1 || PYBIN="python3"
+# Choose Python per policy:
+# 1) Use `python3` if it is >= 3.11
+# 2) Else try `python3.11`
+# 3) Else error
+
+use_py3() {
+  python3 - <<'PYVER'
+import sys
+sys.exit(0 if sys.version_info >= (3, 11) else 1)
+PYVER
+}
+
+if command -v python3 >/dev/null 2>&1 && use_py3; then
+  PYBIN="python3"
+elif command -v python3.11 >/dev/null 2>&1; then
+  PYBIN="python3.11"
+else
+  echo "ERROR: Python 3.11 is required. Please install it (e.g., 'brew install python@3.11') and try again." >&2
+  exit 1
+fi
 
 if [ ! -d "venv" ]; then
   "$PYBIN" -m venv venv
@@ -40,11 +58,18 @@ fi
 PIP="venv/bin/pip3"
 PY="venv/bin/python3"
 
-"$PIP" install --upgrade pip
-"$PIP" install -r requirements.txt
+LOG_DIR="$HOME/Library/Logs/FrigateDetector"
+LOG_FILE="$LOG_DIR/FrigateDetector.log"
+mkdir -p "$LOG_DIR"
 
-"$PY" detector/zmq_onnx_client.py \
-  --model AUTO
+{
+  echo "===== $(date) :: Starting setup ====="
+  "$PIP" install --upgrade pip
+  "$PIP" install -r requirements.txt
+  echo "===== $(date) :: Starting detector ====="
+  "$PY" detector/zmq_onnx_client.py \
+    --model AUTO
+} 2>&1 | tee -a "$LOG_FILE"
 RUNNER
 chmod +x "$PAYLOAD_DIR/run.sh"
 
@@ -61,7 +86,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>applet</string>
+    <string>FrigateDetector</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
@@ -86,23 +111,19 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-cat > "$APP_DIR/Contents/MacOS/applet" <<'APPLET'
+cat > "$APP_DIR/Contents/MacOS/FrigateDetector" <<'EXEC'
 #!/bin/zsh
+set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")"/../.. && pwd)"
 PROJECT_DIR="$APP_DIR/Contents/Resources/app"
-ESCAPED_DIR=$(printf "%q" "$PROJECT_DIR")
-CMD="cd $ESCAPED_DIR; chmod +x ./run.sh; ./run.sh"
 
-osascript <<APPLESCRIPT
-tell application "Terminal"
-    activate
-    do script "$CMD"
-end tell
-APPLESCRIPT
-APPLET
+cd "$PROJECT_DIR"
+chmod +x ./run.sh
+./run.sh
+EXEC
 
-chmod +x "$APP_DIR/Contents/MacOS/applet"
+chmod +x "$APP_DIR/Contents/MacOS/FrigateDetector"
 
 # Attempt to remove quarantine attribute for locally built app (no network download)
 if command -v xattr >/dev/null 2>&1; then
