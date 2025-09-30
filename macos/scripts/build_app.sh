@@ -6,10 +6,47 @@ PROJECT_DIR="$(cd "$(dirname "$0")"/../.. && pwd)"
 APP_NAME="FrigateDetector"
 APP_DIR="$PROJECT_DIR/macos/${APP_NAME}.app"
 RES_DIR="$APP_DIR/Contents/Resources"
+PAYLOAD_DIR="$RES_DIR/app"
 
 echo "Recreating app bundle at $APP_DIR"
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS" "$RES_DIR"
+mkdir -p "$APP_DIR/Contents/MacOS" "$RES_DIR" "$PAYLOAD_DIR"
+
+# Stage minimal payload required to run in isolation
+mkdir -p "$PAYLOAD_DIR/detector"
+rsync -a \
+  "$PROJECT_DIR/detector/" "$PAYLOAD_DIR/detector/"
+
+# Copy top-level files needed at runtime
+cp "$PROJECT_DIR/requirements.txt" "$PAYLOAD_DIR/" 2>/dev/null || true
+cp "$PROJECT_DIR/Makefile" "$PAYLOAD_DIR/" 2>/dev/null || true
+cp "$PROJECT_DIR/README.md" "$PAYLOAD_DIR/" 2>/dev/null || true
+
+# Create embedded runner (used by applet)
+cat > "$PAYLOAD_DIR/run.sh" <<'RUNNER'
+#!/bin/zsh
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$PROJECT_DIR"
+
+PYBIN="python3.11"
+command -v "$PYBIN" >/dev/null 2>&1 || PYBIN="python3"
+
+if [ ! -d "venv" ]; then
+  "$PYBIN" -m venv venv
+fi
+
+PIP="venv/bin/pip3"
+PY="venv/bin/python3"
+
+"$PIP" install --upgrade pip
+"$PIP" install -r requirements.txt
+
+"$PY" detector/zmq_onnx_client.py \
+  --model AUTO
+RUNNER
+chmod +x "$PAYLOAD_DIR/run.sh"
 
 # If an icon exists at macos/AppIcon.icns, copy it in
 if [ -f "$PROJECT_DIR/macos/AppIcon.icns" ]; then
@@ -53,12 +90,14 @@ cat > "$APP_DIR/Contents/MacOS/applet" <<'APPLET'
 #!/bin/zsh
 
 APP_DIR="$(cd "$(dirname "$0")"/../.. && pwd)"
-PROJECT_DIR="$APP_DIR"
+PROJECT_DIR="$APP_DIR/Contents/Resources/app"
+ESCAPED_DIR=$(printf "%q" "$PROJECT_DIR")
+CMD="cd $ESCAPED_DIR; chmod +x ./run.sh; ./run.sh"
 
-osascript <<'APPLESCRIPT'
+osascript <<APPLESCRIPT
 tell application "Terminal"
     activate
-    do script "cd $PROJECT_DIR; chmod +x ./macos/scripts/run_mac.sh; ./macos/scripts/run_mac.sh"
+    do script "$CMD"
 end tell
 APPLESCRIPT
 APPLET
