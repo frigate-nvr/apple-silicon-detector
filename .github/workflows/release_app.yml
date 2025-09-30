@@ -1,0 +1,37 @@
+name: Build macOS App on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-macos-app:
+    name: Build .app and Upload Asset
+    runs-on: macos-13
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure scripts are executable
+        run: |
+          chmod +x macos/scripts/*.sh
+
+      - name: Build app bundle
+        run: |
+          macos/scripts/build_app.sh
+
+      - name: Zip app bundle
+        run: |
+          cd macos
+          ditto -c -k --sequesterRsrc --keepParent FrigateDetector.app FrigateDetector.app.zip
+
+      - name: Upload asset to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: macos/FrigateDetector.app.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+

@@ -2,3 +2,4 @@ venv/*
 models/*
 pyvenv.cfg
 __pycache__
+macos/FrigateDetector.app
