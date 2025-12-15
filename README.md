@@ -26,7 +26,7 @@ make install
 make run
 ```
 
-The detector will automatically use the configured model and start communicating with Frigate.
+The detector will automatically use the model in the Frigate communication and start communicating with Frigate. See [the Frigate documentation](https://deploy-preview-19787--frigate-docs.netlify.app/configuration/object_detectors#apple-silicon-detector) for instructions on setting up the detector.
 
 ## What's Included
 
