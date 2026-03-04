@@ -7,7 +7,7 @@ on:
 jobs:
   build-macos-app:
     name: Build .app and Upload Asset
-    runs-on: macos-13
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
