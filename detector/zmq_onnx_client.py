@@ -516,7 +516,11 @@ class ZmqOnnxClient:
         if self._check_model_exists(model_name):
             logger.info(f"Model {model_name} exists locally")
 
-            if self.current_model == model_name and self.session is not None and self.model_ready:
+            if (
+                self.current_model == model_name
+                and self.session is not None
+                and self.model_ready
+            ):
                 logger.info(f"Model {model_name} already loaded, reusing session")
                 response_header = {
                     "model_available": True,
