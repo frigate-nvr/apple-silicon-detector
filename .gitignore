@@ -1,5 +1,34 @@
-venv/*
-models/*
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+
+# Virtual Environments
+venv/
+.venv/
 pyvenv.cfg
-__pycache__
-macos/FrigateDetector.app
+.python-version
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+
+# Build & Dist
+/build/
+/dist/
+*.dmg
+*.pkg
+
+# Swift / SPM
+.build/
+.swiftpm/
+
+# App Data
+models/
+*.log

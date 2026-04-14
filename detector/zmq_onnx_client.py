@@ -17,20 +17,54 @@ The server will continue running and waiting for requests.
 
 import json
 import logging
+import logging.config
 import os
+import signal
+import sys
 import time
-from typing import List, Optional, Tuple
+from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
 import zmq
 
-from model_util import post_process_yolo, post_process_rfdetr, post_process_dfine
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+from detector.exceptions import (
+    InferenceError,
+    ModelLoadError,
+    TransportError,
 )
+from detector.model_util import post_process_dfine, post_process_rfdetr, post_process_yolo
+
+
+def setup_logging(verbose=False, log_to_file=False):
+    """Configure logging for the detector."""
+
+    config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "console": {
+                "format": "%(asctime)s [client] %(levelname)s - %(message)s",
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "console",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "root": {
+            "level": "DEBUG" if verbose else "INFO",
+            "handlers": ["console"],
+        },
+    }
+
+    logging.config.dictConfig(config)
+
+
+# Initial minimal logging before main setup
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -41,47 +75,67 @@ class ZmqOnnxClient:
 
     def __init__(
         self,
-        endpoint: str = "ipc:///tmp/cache/zmq_detector",
-        model_path: Optional[str] = "AUTO",
-        providers: Optional[List[str]] = None,
+        endpoints: list[str] | None = None,
+        model_path: str | None = "AUTO",
+        providers: list[str] | None = None,
     ):
         """
         Initialize the ZMQ ONNX client.
 
         Args:
-            endpoint: ZMQ IPC endpoint to bind to
+            endpoints: ZMQ endpoints to bind to (TCP and/or IPC)
             model_path: Path to ONNX model file or "AUTO" for automatic model management
             providers: ONNX Runtime execution providers
-            session_options: ONNX Runtime session options
         """
-        self.endpoint = endpoint
+        if endpoints is None:
+            endpoints = ["tcp://0.0.0.0:5555", "ipc:///tmp/frigate-detector/zmq_detector"]
+        self.endpoints = endpoints
         self.model_path = model_path
         self.current_model = None
         self.model_ready = False
-        self.models_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "models"
-        )
+
+        # Ensure logging is setup if it hasn't been already
+        # (This is a safety measure for when the client is instantiated directly)
+        if not logging.getLogger().handlers:
+            setup_logging(log_to_file=False)
+
+        from detector.service_manager import ensure_ipc_dir, get_models_dir
+
+        self.models_dir = str(get_models_dir())
 
         # Initialize ZMQ context and socket
         self.context = None
         self.socket = None
+
+        # Ensure IPC directory exists before ZMQ initialization
+        if any(ep.startswith("ipc://") for ep in self.endpoints):
+            ensure_ipc_dir()
+
         self._initialize_zmq()
+
+        # Register signal handlers for graceful shutdown
+        import signal
+
+        try:
+            signal.signal(signal.SIGTERM, self._handle_signal)
+            signal.signal(signal.SIGINT, self._handle_signal)
+            signal.signal(signal.SIGHUP, self._handle_sighup)
+        except Exception as e:
+            logger.debug(f"Could not register signal handlers: {e}")
 
         # Initialize ONNX Runtime session
         self.session = None
         if self.model_path != "AUTO":
             self.session = self._initialize_onnx_session(providers)
 
-        # Preallocate zero result for error cases
         self.zero_result = np.zeros((20, 6), dtype=np.float32)
+        self._cleaning_up = False
 
-        logger.info(f"ZMQ ONNX client initialized with endpoint: {endpoint}")
+        logger.info(f"ZMQ ONNX client initialized with endpoints: {endpoints}")
         if self.model_path != "AUTO":
             logger.info(f"ONNX model loaded from: {self.model_path}")
         else:
-            logger.info(
-                "ZMQ ONNX client started in AUTO mode - waiting for model requests"
-            )
+            logger.info("ZMQ ONNX client started in AUTO mode - waiting for model requests")
 
     def _initialize_zmq(self):
         """Initialize ZMQ context and socket with proper error handling."""
@@ -98,11 +152,13 @@ class ZmqOnnxClient:
             logger.debug("ZMQ REP socket created successfully")
 
             # Set socket options
-            self.socket.setsockopt(zmq.RCVTIMEO, 5000)  # 5 second receive timeout
-            self.socket.setsockopt(zmq.SNDTIMEO, 5000)  # 5 second send timeout
-            self.socket.setsockopt(
-                zmq.LINGER, 0
-            )  # Don't wait for unsent messages on close
+            # Reduce timeout to 1s to make the process more responsive to signals
+            self.socket.setsockopt(zmq.RCVTIMEO, 1000)
+            self.socket.setsockopt(zmq.SNDTIMEO, 1000)
+            self.socket.setsockopt(zmq.LINGER, 0)  # Don't wait for unsent messages on close
+            # TCP keepalive: detect dead peers and free the port faster
+            self.socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
+            self.socket.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 30)
             logger.debug("ZMQ socket options set successfully")
 
             logger.debug("ZMQ context and socket initialized successfully")
@@ -110,7 +166,7 @@ class ZmqOnnxClient:
         except Exception as e:
             logger.error(f"Failed to initialize ZMQ: {e}")
             self.cleanup()
-            raise
+            raise TransportError(f"Failed to initialize ZMQ: {e}") from e
 
     def _reset_socket(self):
         """Reset the socket when encountering state issues."""
@@ -122,25 +178,27 @@ class ZmqOnnxClient:
                 self.socket.close()
                 self.socket = None
 
-            # Create new socket
             self.socket = self.context.socket(zmq.REP)
-            self.socket.setsockopt(zmq.RCVTIMEO, 5000)
-            self.socket.setsockopt(zmq.SNDTIMEO, 5000)
+            self.socket.setsockopt(zmq.RCVTIMEO, 1000)
+            self.socket.setsockopt(zmq.SNDTIMEO, 1000)
             self.socket.setsockopt(zmq.LINGER, 0)
+            self.socket.setsockopt(zmq.TCP_KEEPALIVE, 1)
+            self.socket.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 30)
 
-            # Rebind to endpoint
-            self.socket.bind(self.endpoint)
+            # Rebind to all endpoints
+            for ep in self.endpoints:
+                self.socket.bind(ep)
             logger.info("Socket reset and rebound successfully")
 
         except Exception as e:
             logger.error(f"Failed to reset socket: {e}")
-            raise
+            raise TransportError(f"Failed to reset socket: {e}") from e
 
     def _create_onnx_session(
         self,
         model_path: str,
-        providers: Optional[List[str]] = None,
-    ) -> Optional[ort.InferenceSession]:
+        providers: list[str] | None = None,
+    ) -> ort.InferenceSession | None:
         """
         Create an ONNX Runtime session with CoreML optimizations.
 
@@ -174,31 +232,25 @@ class ZmqOnnxClient:
                 if provider != "CoreMLExecutionProvider":
                     provider_options.append((provider, {}))
 
-            logger.info(
-                f"Loading ONNX model with providers: {[p[0] for p in provider_options]}"
-            )
+            logger.info(f"Loading ONNX model with providers: {[p[0] for p in provider_options]}")
             session = ort.InferenceSession(model_path, providers=provider_options)
 
             # Log model input/output info
             input_info = session.get_inputs()[0]
             output_info = session.get_outputs()[0]
-            logger.info(
-                f"Model input: {input_info.name}, shape: {input_info.shape}, type: {input_info.type}"
-            )
-            logger.info(
-                f"Model output: {output_info.name}, shape: {output_info.shape}, type: {output_info.type}"
-            )
+            logger.info(f"Model input: {input_info.name}, shape: {input_info.shape}, type: {input_info.type}")
+            logger.info(f"Model output: {output_info.name}, shape: {output_info.shape}, type: {output_info.type}")
 
             return session
 
         except Exception as e:
             logger.error(f"Failed to create ONNX session: {e}")
-            return None
+            raise ModelLoadError(f"Failed to create ONNX session: {e}") from e
 
     def _initialize_onnx_session(
         self,
-        providers: Optional[List[str]] = None,
-    ) -> Optional[ort.InferenceSession]:
+        providers: list[str] | None = None,
+    ) -> ort.InferenceSession | None:
         """
         Initialize ONNX Runtime session with CoreML optimizations.
 
@@ -231,7 +283,7 @@ class ZmqOnnxClient:
     def _load_model(
         self,
         model_name: str,
-        providers: Optional[List[str]] = None,
+        providers: list[str] | None = None,
     ) -> bool:
         """
         Load a model from the models directory with CoreML optimizations.
@@ -263,7 +315,7 @@ class ZmqOnnxClient:
 
         except Exception as e:
             logger.error(f"Failed to load model {model_name}: {e}")
-            return False
+            raise ModelLoadError(f"Failed to load model {model_name}: {e}") from e
 
     def _save_model(self, model_name: str, model_data: bytes) -> bool:
         """
@@ -293,7 +345,7 @@ class ZmqOnnxClient:
             logger.error(f"Failed to save model {model_name}: {e}")
             return False
 
-    def _decode_request(self, frames: List[bytes]) -> Tuple[np.ndarray, dict]:
+    def _decode_request(self, frames: list[bytes]) -> tuple[np.ndarray | None, dict]:
         """
         Decode the incoming request frames.
 
@@ -316,9 +368,7 @@ class ZmqOnnxClient:
 
             if "model_data" in header:
                 if len(frames) < 2:
-                    raise ValueError(
-                        f"Model data request expected 2 frames, got {len(frames)}"
-                    )
+                    raise ValueError(f"Model data request expected 2 frames, got {len(frames)}")
                 return None, header
 
             if len(frames) < 2:
@@ -372,29 +422,33 @@ class ZmqOnnxClient:
                 input_data = {input_name: tensor}
 
             # Run inference
+            t_start = 0.0
             if logger.isEnabledFor(logging.DEBUG):
                 t_start = time.perf_counter()
 
             outputs = self.session.run(None, input_data)
 
+            t_after_onnx = 0.0
             if logger.isEnabledFor(logging.DEBUG):
                 t_after_onnx = time.perf_counter()
 
+            # Post-process based on model type
             if model_type == "yolo-generic" or model_type == "yologeneric":
                 result = post_process_yolo(outputs, width, height)
             elif model_type == "dfine":
                 result = post_process_dfine(outputs, width, height)
             elif model_type == "rfdetr":
                 result = post_process_rfdetr(outputs)
+            else:
+                logger.error(f"Unknown model_type '{model_type}' — returning zero detections")
+                return self.zero_result
 
             if logger.isEnabledFor(logging.DEBUG):
                 t_after_post = time.perf_counter()
                 onnx_ms = (t_after_onnx - t_start) * 1000.0
                 post_ms = (t_after_post - t_after_onnx) * 1000.0
                 total_ms = (t_after_post - t_start) * 1000.0
-                logger.debug(
-                    f"Inference timing: onnx={onnx_ms:.2f}ms, post={post_ms:.2f}ms, total={total_ms:.2f}ms"
-                )
+                logger.debug(f"Inference timing: onnx={onnx_ms:.2f}ms, post={post_ms:.2f}ms, total={total_ms:.2f}ms")
 
             # Ensure float32 dtype
             result = result.astype(np.float32)
@@ -403,9 +457,9 @@ class ZmqOnnxClient:
 
         except Exception as e:
             logger.error(f"ONNX inference failed: {e}")
-            return self.zero_result
+            raise InferenceError(f"ONNX inference failed: {e}") from e
 
-    def _extract_input_hw(self, header: dict) -> Tuple[int, int]:
+    def _extract_input_hw(self, header: dict) -> tuple[int, int]:
         """
         Extract (width, height) from the header and/or tensor shape, supporting
         NHWC/NCHW as well as 3D/4D inputs. Falls back to 320x320 if unknown.
@@ -459,7 +513,7 @@ class ZmqOnnxClient:
         logger.debug("Falling back to default input size (320x320)")
         return 320, 320
 
-    def _build_response(self, result: np.ndarray) -> List[bytes]:
+    def _build_response(self, result: np.ndarray) -> list[bytes]:
         """
         Build the response message.
 
@@ -495,7 +549,7 @@ class ZmqOnnxClient:
             result_bytes = self.zero_result.tobytes(order="C")
             return [header_bytes, result_bytes]
 
-    def _handle_model_request(self, header: dict) -> List[bytes]:
+    def _handle_model_request(self, header: dict) -> list[bytes]:
         """
         Handle model availability request.
 
@@ -540,7 +594,7 @@ class ZmqOnnxClient:
 
         return [json.dumps(response_header).encode("utf-8")]
 
-    def _handle_model_data(self, header: dict, model_data: bytes) -> List[bytes]:
+    def _handle_model_data(self, header: dict, model_data: bytes) -> list[bytes]:
         """
         Handle model data transfer.
 
@@ -585,25 +639,61 @@ class ZmqOnnxClient:
 
         return [json.dumps(response_header).encode("utf-8")]
 
-    def _build_error_response(self, error_msg: str) -> List[bytes]:
+    def _build_error_response(self, error_msg: str) -> list[bytes]:
         """Build an error response message."""
         error_header = {"error": error_msg}
         return [json.dumps(error_header).encode("utf-8")]
+
+    def _handle_sighup(self, sig, frame):
+        """Handle SIGHUP to reload configuration dynamically."""
+        logger.info("Received SIGHUP, reloading configuration...")
+        try:
+            from detector import service_manager
+
+            config = service_manager.load_config()
+            debug_enabled = bool(config.get("debug"))
+
+            new_level = logging.DEBUG if debug_enabled else logging.INFO
+            logging.getLogger().setLevel(new_level)
+        except Exception as e:
+            logger.error(f"Failed to reload config on SIGHUP: {e}")
+
+    def _handle_signal(self, sig, frame):
+        """Handle termination signals."""
+        sig_name = "SIGTERM" if sig == signal.SIGTERM else "SIGINT"
+        msg = f"{sig_name} received: shutting down gracefully"
+        logger.info(msg)
+        try:
+            self.cleanup()
+        except Exception as e:
+            logger.error(f"Cleanup failed during signal handling: {e}")
+        finally:
+            logger.info("Process exiting now")
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+                import os
+
+                os.fsync(sys.stdout.fileno())
+            except (OSError, ValueError, AttributeError):
+                pass
+
+            # Hard exit to ensure we don't hang
+            os._exit(0)
 
     def start_server(self):
         """
         Start the ZMQ server and listen for requests.
         """
         try:
-            # Log the exact endpoint being used
-            logger.info(f"Attempting to bind to endpoint: {self.endpoint}")
+            # Bind socket to all endpoints
+            for ep in self.endpoints:
+                logger.info(f"Attempting to bind to endpoint: {ep}")
+                self.socket.bind(ep)
+                logger.info(f"ZMQ server successfully bound to {ep}")
+            logger.info("Detector is ready to accept model requests and inference requests")
 
-            # Bind socket to endpoint
-            self.socket.bind(self.endpoint)
-            logger.info(f"ZMQ server successfully bound to {self.endpoint}")
-            logger.info(
-                "Detector is ready to accept model requests and inference requests"
-            )
+            # Note: Signal handlers are now registered in __init__
 
             while True:
                 try:
@@ -626,9 +716,7 @@ class ZmqOnnxClient:
                         else:
                             result = self.zero_result
                             if not self.model_ready:
-                                logger.debug(
-                                    "Model not ready, returning zero detections"
-                                )
+                                logger.debug("Model not ready, returning zero detections")
 
                         response = self._build_response(result)
                         self.socket.send_multipart(response)
@@ -640,17 +728,14 @@ class ZmqOnnxClient:
                         self.socket.send_multipart(response)
 
                 except zmq.ZMQError as e:
-                    error_msg = str(e)
-
-                    # Handle specific ZMQ errors
-                    if "Resource temporarily unavailable" in error_msg:
-                        logger.debug(
-                            "ZMQ heartbeat: Unable to communicate with Frigate"
-                        )
+                    # EAGAIN (Resource temporarily unavailable) is expected during idle periods (1s timeout)
+                    if e.errno == zmq.EAGAIN:
+                        logger.debug("ZMQ heartbeat: Waiting for Frigate request...")
                         continue
-                    elif (
-                        "Operation cannot be accomplished in current state" in error_msg
-                    ):
+
+                    # Handle other specific ZMQ errors
+                    error_msg = str(e)
+                    if "Operation cannot be accomplished in current state" in error_msg:
                         logger.info("Socket state issue, resetting socket...")
                         try:
                             self._reset_socket()
@@ -661,7 +746,7 @@ class ZmqOnnxClient:
                     else:
                         # Send error response for other ZMQ errors
                         logger.error(f"ZMQ error: {e}")
-                        self._send_error_response(str(e))
+                        break
 
                 except Exception as e:
                     logger.error(f"Unexpected error: {e}")
@@ -687,53 +772,144 @@ class ZmqOnnxClient:
             logger.error(f"Failed to send error response: {send_error}")
 
     def cleanup(self):
-        """Clean up resources."""
+        """Perform comprehensive cleanup of all resources."""
+        if getattr(self, "_cleaning_up", False):
+            return
+        self._cleaning_up = True
+
+        logger.info("Starting cleanup sequence...")
+
         try:
-            if self.socket:
-                self.socket.close()
+            # Remove IPC sockets from filesystem
+            for ep in self.endpoints:
+                if ep.startswith("ipc://"):
+                    socket_path = ep.replace("ipc://", "")
+                    try:
+                        Path(socket_path).unlink(missing_ok=True)
+                        logger.debug(f"Removed IPC socket: {socket_path}")
+                    except Exception as e:
+                        logger.debug(f"Failed to remove IPC socket {socket_path}: {e}")
+
+            if getattr(self, "socket", None):
+                try:
+                    self.socket.close(linger=0)
+                except Exception:
+                    pass
                 self.socket = None
-            if self.context:
-                self.context.term()
+            if getattr(self, "context", None):
+                try:
+                    self.context.term()
+                except Exception:
+                    pass
                 self.context = None
+
+            if getattr(self, "session", None):
+                try:
+                    # Deleting the session object triggers the release of
+                    # hardware resources (NPU/GPU) in ONNX Runtime.
+                    del self.session
+                except Exception:
+                    pass
+                self.session = None
+
+            # Force hardware-level flush of all outputs to ensure logs reach the disk
+            try:
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+                import os
+                import sys
+
+                sys.stdout.flush()
+                sys.stderr.flush()
+
+                # Command the macOS kernel to commit data to physical storage
+                try:
+                    os.fsync(sys.stdout.fileno())
+                except (OSError, ValueError):
+                    pass
+                try:
+                    os.fsync(sys.stderr.fileno())
+                except (OSError, ValueError):
+                    pass
+
+                # Brief sleep to allow kernel to finish the operation
+                import time
+
+                time.sleep(0.1)
+            except Exception:
+                pass
+
             logger.info("Cleanup completed")
+            sys.stdout.flush()
+            sys.stderr.flush()
+
         except Exception as e:
-            logger.error(f"Cleanup error: {e}")
+            try:
+                logger.error(f"Cleanup error: {e}")
+            except Exception:
+                pass
+        finally:
+            self._cleaning_up = False
 
 
-def main():
+def main(endpoints=None, model_path=None, providers=None, verbose=False):
     """Main function to run the ZMQ ONNX client."""
-    import argparse
+    import sys
 
-    parser = argparse.ArgumentParser(description="ZMQ TCP ONNX Runtime Client")
-    parser.add_argument(
-        "--endpoint",
-        default="tcp://*:5555",
-        help="ZMQ TCP endpoint (default: tcp://*:5555)",
-    )
-    parser.add_argument(
-        "--model",
-        default="AUTO",
-        help="Path to ONNX model file or AUTO for automatic model management",
-    )
-    parser.add_argument(
-        "--providers",
-        nargs="+",
-        default=["CoreMLExecutionProvider"],
-        help="ONNX Runtime execution providers",
-    )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    # Ensure streams are unbuffered as early as possible
+    try:
+        sys.stdout.reconfigure(write_through=True)
+        sys.stderr.reconfigure(write_through=True)
+    except (AttributeError, ValueError):
+        pass
 
-    args = parser.parse_args()
+    from detector import service_manager
 
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+    config = service_manager.load_config()
+
+    if endpoints is None:
+        import argparse
+
+        parser = argparse.ArgumentParser(description="ZMQ TCP ONNX Runtime Client")
+        parser.add_argument(
+            "--endpoint",
+            nargs="+",
+            default=["tcp://0.0.0.0:5555", "ipc:///tmp/frigate-detector/zmq_detector"],
+            help="ZMQ endpoint(s) to bind to (default: tcp + ipc)",
+        )
+        parser.add_argument(
+            "--model",
+            default="AUTO",
+            help="Path to ONNX model file or AUTO for automatic model management",
+        )
+        parser.add_argument(
+            "--providers",
+            nargs="+",
+            default=["CoreMLExecutionProvider"],
+            help="ONNX Runtime execution providers",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+
+        args = parser.parse_args()
+        endpoints = args.endpoint
+        model_path = args.model
+        providers = args.providers
+        verbose = args.verbose
+
+    # Override verbose with persistent config if not explicitly set via CLI
+    # Hard-cast to bool to avoid "truthy" strings (e.g. "off") from enabling debug
+    if not verbose and bool(config.get("debug")):
+        verbose = True
+
+    # Configure robust logging to stdout, parent process captures it to file
+    setup_logging(verbose=verbose, log_to_file=False)
+
+    # Refresh logger after setup_logging
+    global logger
+    logger = logging.getLogger(__name__)
 
     # Create and start client
-    client = ZmqOnnxClient(
-        endpoint=args.endpoint, model_path=args.model, providers=args.providers
-    )
+    client = ZmqOnnxClient(endpoints=endpoints, model_path=model_path, providers=providers)
 
     try:
         client.start_server()

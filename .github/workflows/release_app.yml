@@ -11,27 +11,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Ensure scripts are executable
-        run: |
-          chmod +x macos/scripts/*.sh
-
-      - name: Build app bundle
-        run: |
-          macos/scripts/build_app.sh
-
-      - name: Zip app bundle
-        run: |
-          cd macos
-          ditto -c -k --sequesterRsrc --keepParent FrigateDetector.app FrigateDetector.app.zip
-
-      - name: Upload asset to release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: brew install create-dmg
+      - run: uv sync
+      - run: make build
+      - uses: softprops/action-gh-release@v2
         with:
-          files: macos/FrigateDetector.app.zip
+          files: build/FrigateDetector.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-

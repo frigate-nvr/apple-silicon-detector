@@ -11,9 +11,7 @@ logger = logging.getLogger(__name__)
 ### Post Processing
 
 
-def post_process_dfine(
-    tensor_output: np.ndarray, width: int, height: int
-) -> np.ndarray:
+def post_process_dfine(tensor_output: np.ndarray, width: int, height: int) -> np.ndarray:
     class_ids = tensor_output[0][tensor_output[2] > 0.4]
     boxes = tensor_output[1][tensor_output[2] > 0.4]
     scores = tensor_output[2][tensor_output[2] > 0.4]
@@ -24,7 +22,7 @@ def post_process_dfine(
     detections = np.zeros((20, 6), np.float32)
 
     for i, (bbox, confidence, class_id) in enumerate(
-        zip(boxes[indices], scores[indices], class_ids[indices])
+        zip(boxes[indices], scores[indices], class_ids[indices], strict=False)
     ):
         if i == 20:
             break
@@ -72,13 +70,16 @@ def post_process_rfdetr(tensor_output: list[np.ndarray, np.ndarray]) -> np.ndarr
     filtered_boxes = np.stack([x_min, y_min, x_max, y_max], axis=-1)
 
     # apply nms
-    indices = cv2.dnn.NMSBoxes(
-        filtered_boxes, filtered_scores, score_threshold=0.4, nms_threshold=0.4
-    )
+    indices = cv2.dnn.NMSBoxes(filtered_boxes, filtered_scores, score_threshold=0.4, nms_threshold=0.4)
     detections = np.zeros((20, 6), np.float32)
 
     for i, (bbox, confidence, class_id) in enumerate(
-        zip(filtered_boxes[indices], filtered_scores[indices], filtered_labels[indices])
+        zip(
+            filtered_boxes[indices],
+            filtered_scores[indices],
+            filtered_labels[indices],
+            strict=True,
+        )
     ):
         if i == 20:
             break
@@ -204,7 +205,7 @@ def __post_process_nms_yolo(predictions: np.ndarray, width, height) -> np.ndarra
     indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.4, nms_threshold=0.4)
     detections = np.zeros((20, 6), np.float32)
     for i, (bbox, confidence, class_id) in enumerate(
-        zip(boxes[indices], scores[indices], class_ids[indices])
+        zip(boxes[indices], scores[indices], class_ids[indices], strict=False)
     ):
         if i == 20:
             break
@@ -252,13 +253,11 @@ def post_process_yolox(
     cls_inds = scores.argmax(1)
     scores = scores[np.arange(len(cls_inds)), cls_inds]
 
-    indices = cv2.dnn.NMSBoxes(
-        boxes_xyxy, scores, score_threshold=0.4, nms_threshold=0.4
-    )
+    indices = cv2.dnn.NMSBoxes(boxes_xyxy, scores, score_threshold=0.4, nms_threshold=0.4)
 
     detections = np.zeros((20, 6), np.float32)
     for i, (bbox, confidence, class_id) in enumerate(
-        zip(boxes_xyxy[indices], scores[indices], cls_inds[indices])
+        zip(boxes_xyxy[indices], scores[indices], cls_inds[indices], strict=True)
     ):
         if i == 20:
             break
