@@ -77,7 +77,9 @@ echo "Signing FrigateDetector.app..."
 ENTITLEMENTS="macos/Entitlements.plist"
 
 # Remove existing signatures and sign deeply
+find "$APP/Contents/Resources/detector-bin/_internal" -maxdepth 1 -name "python*" -type f -exec rm -f {} \; 2>/dev/null || true
 find "$APP" -type f -exec codesign --remove-signature {} \; 2>/dev/null || true
+find "$APP/Contents/Resources/detector-bin" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -0111 \) -exec codesign --force --sign - {} \; 2>/dev/null || true
 codesign --force --deep --sign - --entitlements "$ENTITLEMENTS" "$APP"
 
 # ── Step 5: Cleanup intermediates ────────────────────────────
