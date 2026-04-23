@@ -21,8 +21,17 @@ An optimized object detection client for Frigate that leverages Apple Silicon's 
 4. Click the icon → toggle **Open at Login** or use the **Start Detector** button.
 5. Optionally install the `detector` CLI via **Advanced → Install CLI Tool...** referenced in [CLI Reference](#cli-reference).
 
-### Option B: Headless (SSH / Terminal)
-No display required. After copying the app to your server, use the embedded CLI binary:
+### Option B: Standalone CLI (headless / SSH)
+Download the standalone CLI binary — no app bundle required:
+1. Download `detector-macos-arm64.tar.gz` from the [Releases](https://github.com/frigate-nvr/apple-silicon-detector/releases) page.
+2. Extract and run:
+```bash
+tar -xzf detector-macos-arm64.tar.gz
+./detector/detector start
+```
+
+### Option C: Headless via App Bundle
+If you have the `.app` installed but no display, use the embedded CLI binary:
 ```bash
 # Enable the background daemon
 /Applications/FrigateDetector.app/Contents/MacOS/detector startup enable
@@ -33,8 +42,7 @@ No display required. After copying the app to your server, use the embedded CLI 
 # View logs
 /Applications/FrigateDetector.app/Contents/MacOS/detector logs -f
 ```
-
-### Option C: Source (developer install)
+### Option D: Source (developer install)
 Runs directly from the repository using [uv](https://docs.astral.sh/uv/):
 ```bash
 git clone https://github.com/frigate-nvr/apple-silicon-detector
@@ -151,6 +159,7 @@ client.start_server()
 | Error log | `~/Library/Logs/FrigateDetector/detector.err.log` |
 | Config | `~/Library/Application Support/FrigateDetector/config.json` |
 | Service plist | `~/Library/LaunchAgents/com.frigate.apple-silicon-detector.plist` |
+| GUI login plist | `~/Library/LaunchAgents/com.frigate.apple-silicon-detector.gui.plist` |
 | CLI symlink | `~/.local/bin/detector` |
 
 ## Error Handling
@@ -167,6 +176,7 @@ The client includes comprehensive error handling with a structured exception hie
 - **Memory Management**: Efficient tensor handling with minimal copying
 - **TCP Keepalive**: Detects dead peers and frees ports faster (30s idle timeout)
 - **Fast Signal Response**: 1s ZMQ heartbeat timeout for responsive shutdown
+- **Model Session Reuse**: Skips redundant model reloads when Frigate re-requests the same model
 - **Resource Cleanup**: Explicit ONNX session release frees NPU/GPU on shutdown
 
 ## Troubleshooting
