@@ -3,18 +3,21 @@
 Simple ZMQ connection test script to verify connectivity.
 """
 
-import zmq
 import json
-import numpy as np
 import logging
+
+import numpy as np
+import zmq
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def test_zmq_server(endpoint="ipc:///tmp/cache/zmq_detector"):
+def test_zmq_server(endpoint=None):
     """Test ZMQ server connectivity."""
+    if endpoint is None:
+        endpoint = "tcp://localhost:5555"
     try:
         # Create context and socket
         context = zmq.Context.instance()
@@ -70,8 +73,10 @@ def test_zmq_server(endpoint="ipc:///tmp/cache/zmq_detector"):
             pass
 
 
-def test_zmq_bind(endpoint="ipc:///tmp/cache/zmq_detector"):
+def test_zmq_bind(endpoint=None):
     """Test if we can bind to the endpoint (useful for debugging)."""
+    if endpoint is None:
+        endpoint = "tcp://0.0.0.0:5555"
     try:
         context = zmq.Context.instance()
         socket = context.socket(zmq.REP)
@@ -100,8 +105,8 @@ def main():
     parser = argparse.ArgumentParser(description="ZMQ Connection Test")
     parser.add_argument(
         "--endpoint",
-        default="ipc:///tmp/cache/zmq_detector",
-        help="ZMQ endpoint to test",
+        default=None,
+        help="ZMQ endpoint to test (default: user-scoped IPC)",
     )
     parser.add_argument(
         "--bind-test",

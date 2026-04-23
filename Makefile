@@ -1,36 +1,57 @@
-VENV := venv
-PYTHON := python3.11
-PIP := $(VENV)/bin/pip3
-PY := $(VENV)/bin/python3
+UV ?= $(shell command -v uv || echo ~/.local/bin/uv)
+DETECTOR := $(UV) run detector
 
-.PHONY: help venv install reinstall clean run
+.PHONY: help install clean run start test lint format typecheck check smoke-test build build-macos
 
 help:
-	@echo "Targets:"
-	@echo "  venv       - Create local virtual environment in $(VENV)/"
-	@echo "  install    - Create venv (if needed) and install dependencies"
-	@echo "  run        - Run the ZMQ ONNX client"
+	@echo "Usage: make [target]"
 	@echo ""
-	@echo "Examples:"
-	@echo "  make install"
-	@echo "  make run MODEL=/path/to/model.onnx"
-	@echo "  make run MODEL=/path/to/model.onnx ENDPOINT=ipc:///tmp/cache/zmq_detector"
-	@echo "  make run MODEL=/path/to/model.onnx PROVIDERS=\"CoreMLExecutionProvider CPUExecutionProvider\" VERBOSE=1"
+	@echo "Core Targets:"
+	@echo "  install           - Install dependencies via uv"
+	@echo "  run / start       - Run the detector in foreground"
+	@echo ""
+	@echo "Development & Quality:"
+	@echo "  lint              - Run ruff for linting"
+	@echo "  format            - Run ruff for formatting"
+	@echo "  typecheck         - Run pyright for type checking"
+	@echo "  test              - Run pytest suite"
+	@echo "  check             - Run lint, typecheck, and test"
+	@echo "  smoke-test        - Run ZMQ connection smoke test"
+	@echo ""
+	@echo "  build             - Build the standalone CLI binary"
+	@echo "  build-macos       - Build the macOS App (CLI + GUI + DMG)"
+	@echo "  clean             - Remove all build artifacts, virtualenv, and caches"
 
-venv:
-	$(PYTHON) -m venv $(VENV)
+install:
+	$(UV) sync --all-groups
 
-install: venv
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
+run start:
+	$(DETECTOR) start
 
-run: venv
-	$(PY) detector/zmq_onnx_client.py $(if $(MODEL),--model $(MODEL),) $(if $(ENDPOINT),--endpoint $(ENDPOINT),) $(if $(PROVIDERS),--providers $(PROVIDERS),) $(if $(VERBOSE),-v,)
 
-reinstall: clean install
+test:
+	$(UV) run pytest
+
+lint:
+	$(UV) run ruff check .
+
+format:
+	$(UV) run ruff format .
+
+typecheck:
+	$(UV) run pyright
+
+check: lint typecheck test
+
+smoke-test:
+	$(UV) run scripts/zmq_smoke_test.py
+
+build:
+	./macos/build/build_cli.sh
+
+build-macos:
+	./macos/build/build_app.sh
 
 clean:
-	rm -rf $(VENV)
-
-
- 
+	rm -rf .venv build/ .pytest_cache .ruff_cache macos/swift/.build macos/swift/.swiftpm
+	find . -type d -name "__pycache__" -exec rm -rf {} +
