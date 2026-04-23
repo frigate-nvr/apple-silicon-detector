@@ -114,7 +114,9 @@ class DetectorManager: ObservableObject {
                 newStatus = .stopped
             }
             
-            let newStartupEnabled = output.contains("Startup:   enabled")
+            let guiPlistPath = Constants.launchAgentsDir
+                .appendingPathComponent("\(Constants.guiServiceLabel).plist")
+            let newStartupEnabled = FileManager.default.fileExists(atPath: guiPlistPath.path)
             let newDebugEnabled = output.contains("Debug:     enabled")
             
             // Parse endpoints
@@ -189,16 +191,48 @@ class DetectorManager: ObservableObject {
         }
     }
     
+    private func installGUILoginPlist() {
+        let plistContent = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>\(Constants.guiServiceLabel)</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>/usr/bin/open</string>
+                <string>-a</string>
+                <string>\(Bundle.main.bundlePath)</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+        </dict>
+        </plist>
+        """
+        // Write to ~/Library/LaunchAgents/com.frigate.apple-silicon-detector.gui.plist
+        let plistPath = Constants.launchAgentsDir
+            .appendingPathComponent("\(Constants.guiServiceLabel).plist")
+        try? plistContent.write(to: plistPath, atomically: true, encoding: .utf8)
+        _ = ShellHelper.run("/bin/launchctl", arguments: ["load", "-w", plistPath.path])
+    }
+
+    private func removeGUILoginPlist() {
+        let plistPath = Constants.launchAgentsDir
+            .appendingPathComponent("\(Constants.guiServiceLabel).plist")
+        _ = ShellHelper.run("/bin/launchctl", arguments: ["unload", plistPath.path])
+        try? FileManager.default.removeItem(at: plistPath)
+    }
+
     func toggleStartup() {
         startupEnabled.toggle()
-        let newState = startupEnabled
-        
-        DispatchQueue.global(qos: .background).async {
-            _ = ShellHelper.run(self.helperPath, arguments: ["startup", newState ? "enable" : "disable"])
-            DispatchQueue.main.async {
-                self.updateStatus()
-            }
+        if startupEnabled {
+            installGUILoginPlist()
+        } else {
+            removeGUILoginPlist()
         }
+        updateStatus()
     }
     
     func toggleDebugLogging() {

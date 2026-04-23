@@ -25,6 +25,7 @@ dev = [
     "pyinstaller>=6.19.0",
     "pytest>=8.0",
     "ruff>=0.11",
+    "pyright>=1.1.350",
 ]
 
 

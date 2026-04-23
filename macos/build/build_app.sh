@@ -1,6 +1,9 @@
 #!/bin/zsh
 set -euo pipefail
 
+# Extract version from pyproject.toml
+VERSION=$(grep '^version =' pyproject.toml | cut -d '"' -f 2)
+
 # ── Step 1: Build Swift UI ──────────────────────────────────
 # Compiles the native macOS menu bar dashboard using the Swift package.
 echo "Building Swift menu bar app..."
@@ -10,22 +13,8 @@ swift build -c release
 SWIFT_BIN=".build/release/FrigateDetector"
 cd ../..
 
-# ── Step 2: Build Python Service ─────────────────────────────
-# Packages the detector logic, CLI, and model utilities into a standalone
-# directory structure using PyInstaller.
-rm -rf build
-if command -v uv >/dev/null 2>&1; then
-    UV_CMD=(uv run)
-elif [ -f ~/.local/bin/uv ]; then
-    UV_CMD=(~/.local/bin/uv run)
-else
-    UV_CMD=()
-fi
-echo "Building Unified Python binary..."
-cd macos/build
-"${UV_CMD[@]}" pyinstaller ../../pyinstaller.spec --distpath ../../build/ \
-    --workpath ../../build/pyinstaller --noconfirm
-cd ../..
+# ── Step 2: Build Python CLI ────────────────────────────────
+./macos/build/build_cli.sh
 
 # ── Step 3: Assemble .app Bundle ─────────────────────────────
 # Standard macOS application structure:
@@ -58,7 +47,10 @@ EOF
 chmod +x "$APP/Contents/MacOS/detector"
 
 # Info.plist and App icon
+echo "Syncing version $VERSION to Info.plist..."
 cp macos/swift/Sources/FrigateDetector/Resources/Info.plist "$APP/Contents/"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
 cp macos/assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Compiled Asset Catalog

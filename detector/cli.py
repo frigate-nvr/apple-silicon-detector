@@ -62,11 +62,7 @@ def main():
     # startup
     parser_startup = subparsers.add_parser("startup", help="Enable or disable auto-start on login")
     parser_startup.add_argument("state", choices=["enable", "disable"], help="Set auto-start state (enable or disable)")
-    parser_startup.add_argument(
-        "--headless",
-        action="store_true",
-        help="Start as background service without GUI (even if bundled)",
-    )
+
     parser_startup.add_argument(
         "--endpoint",
         nargs="+",
@@ -166,7 +162,7 @@ def main():
             else:
                 print("○ Frigate Detector is not running")
 
-        print(f"  Startup:   {'enabled' if status.startup_enabled else 'disabled'}")
+        print(f"  Startup:   {status.startup_enabled}")
         print(f"  Debug:     {'enabled' if status.debug else 'disabled'}")
         print(f"  Log:       {status.log_path}")
 
@@ -187,12 +183,11 @@ def main():
         if args.state == "enable":
             service_manager.set_run_at_load(
                 True,
-                headless=args.headless,
                 endpoints=args.endpoint,
                 providers=args.providers,
                 model=args.model or "AUTO",
             )
-            print(f"✓ Startup auto-launch enabled ({'headless' if args.headless else 'GUI'})")
+            print("✓ Startup auto-launch enabled (headless)")
         else:
             service_manager.set_run_at_load(False)
             print("✓ Startup auto-launch disabled")

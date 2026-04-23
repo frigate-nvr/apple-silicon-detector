@@ -12,7 +12,8 @@ SERVICE_LABEL = "com.frigate.apple-silicon-detector"
 PLIST_FILENAME = f"{SERVICE_LABEL}.plist"
 LAUNCH_AGENTS = Path.home() / "Library" / "LaunchAgents"
 PLIST_PATH = LAUNCH_AGENTS / PLIST_FILENAME
-ASSOCIATED_BUNDLE_ID = "com.frigate.apple-silicon-detector.app"
+GUI_SERVICE_LABEL = f"{SERVICE_LABEL}.gui"
+GUI_PLIST_PATH = LAUNCH_AGENTS / f"{GUI_SERVICE_LABEL}.plist"
 LOG_DIR = Path.home() / "Library" / "Logs" / "FrigateDetector"
 MODELS_DIR = Path.home() / "Library" / "Application Support" / "FrigateDetector" / "models"
 # ── Shared constants (keep in sync with macos/swift/Sources/FrigateDetector/Constants.swift) ──
@@ -32,7 +33,7 @@ class ServiceStatus:
     pid: int | None
     uptime: str | None
     endpoints: list[str]
-    startup_enabled: bool
+    startup_enabled: str
     log_path: str
     err_log_path: str
     models_dir: str
@@ -51,24 +52,7 @@ def get_project_dir() -> Path:
 
 
 def get_detector_service_bin() -> Path:
-    if is_bundled():
-        # If we are already running the real binary (inside detector-bin)
-        if "detector-bin" in str(sys.executable):
-            return Path(sys.executable)
-
-        # If we are running the wrapper, find the real binary
-        real_bin = Path(sys.executable).parent / "detector-bin" / "detector"
-        if real_bin.exists():
-            return real_bin
-        return Path(sys.executable)
-
-    # Non-bundled fallback: try to find the python executable in the current environment
-    # This is usually .venv/bin/python or sys.executable itself
-    base_python = Path(sys.executable)
-    if base_python.name.startswith("python"):
-        return base_python
-
-    return base_python.parent / "python"
+    return Path(sys.executable)
 
 
 def get_cli_bin() -> Path:
@@ -81,24 +65,6 @@ def get_log_paths() -> tuple[Path, Path]:
 
 def get_models_dir() -> Path:
     return MODELS_DIR
-
-
-def get_app_path() -> Path | None:
-    """Return the path to the FrigateDetector.app bundle if bundled."""
-    if not is_bundled():
-        return None
-
-    # Robustly find the .app bundle by searching upwards.
-    # sys.executable might be in Contents/MacOS/ or Contents/MacOS/detector-bin/
-    # resolve() handles symlinks to ensure we are looking at the real path.
-    curr = Path(sys.executable).resolve()
-    for _ in range(5):
-        if curr.suffix == ".app":
-            return curr
-        if curr.parent == curr:
-            break
-        curr = curr.parent
-    return None
 
 
 def _get_ipc_dir() -> Path:
@@ -143,7 +109,6 @@ def load_config() -> dict:
 
 
 def save_config(
-    headless: bool | None = None,
     endpoints: list[str] | None = None,
     providers: list[str] | None = None,
     model: str | None = None,
@@ -152,8 +117,6 @@ def save_config(
     """Save the persistent configuration to config.json, merging with existing settings."""
     config = load_config()
 
-    if headless is not None:
-        config["headless"] = headless
     if endpoints is not None:
         config["endpoints"] = endpoints
     if providers is not None:
@@ -170,8 +133,6 @@ def save_config(
         config["providers"] = DEFAULT_PROVIDERS
     if "model" not in config:
         config["model"] = "AUTO"
-    if "headless" not in config:
-        config["headless"] = False
     if "debug" not in config:
         config["debug"] = False
 
@@ -190,17 +151,14 @@ def save_config(
 
 
 def generate_plist(run_at_load: bool = False) -> str:
-    """Generate a static launchd plist content that always calls the startup launcher."""
+    """Generate a launchd plist for the detector service (headless)."""
     service_bin = get_detector_service_bin()
     run_at_load_xml = "<true/>" if run_at_load else "<false/>"
 
-    # Always invoke the binary with --service --startup flags.
-    # The entry_point.py will then decide based on config.json whether to launch the GUI or Service.
     if is_bundled():
         exec_args = [
             f"<string>{service_bin}</string>",
             "<string>--service</string>",
-            "<string>--startup</string>",
         ]
     else:
         # For non-bundled, we use the module execution
@@ -209,7 +167,6 @@ def generate_plist(run_at_load: bool = False) -> str:
             "<string>-m</string>",
             "<string>detector</string>",
             "<string>--service</string>",
-            "<string>--startup</string>",
         ]
 
     args_xml = "\n        ".join(exec_args)
@@ -233,10 +190,6 @@ def generate_plist(run_at_load: bool = False) -> str:
     <string>{out_path}</string>
     <key>StandardErrorPath</key>
     <string>{err_path}</string>
-    <key>AssociatedBundleIdentifiers</key>
-    <array>
-        <string>{ASSOCIATED_BUNDLE_ID}</string>
-    </array>
 </dict>
 </plist>"""
 
@@ -261,7 +214,6 @@ def spawn_detector_process(endpoints: list[str] | None = None, providers: list[s
     service_bin = get_detector_service_bin()
     base_args = get_service_args(endpoints, providers)
 
-    # CRITICAL: Always include --service when spawning the daemon
     cmd = [str(service_bin)]
     if is_bundled():
         cmd.append("--service")
@@ -333,9 +285,7 @@ def start_service(endpoints: list[str] | None = None, providers: list[str] | Non
         return
 
     # Use manual background spawn (always).
-    # We avoid 'launchctl start' because the current plist includes --startup,
-    # which triggers a GUI redirect in entry_point.py, causing a loop.
-    # spawn_detector_process gives us direct engine execution.
+    # Always use direct spawn for consistency across GUI and CLI contexts.
     _set_state_flag("starting", True)
     try:
         spawn_detector_process(endpoints, providers)
@@ -427,12 +377,7 @@ def get_pids() -> list[int]:
                 )
                 if ps_res.returncode == 0:
                     cmdline = ps_res.stdout.strip()
-                    # We match both --service (daemon) and detector.zmq_onnx_client (the actual engine)
-                    is_bundled_match = "detector-bin" in cmdline
-
-                    if ("--service" in cmdline or "detector.zmq_onnx_client" in cmdline) and (
-                        is_bundled_match or not is_bundled()
-                    ):
+                    if "--service" in cmdline or "detector.zmq_onnx_client" in cmdline:
                         pids.append(int(pid_str))
     except Exception:
         pass
@@ -459,30 +404,47 @@ def _get_uptime_for_pid(pid: int | None) -> str | None:
     return None
 
 
-def is_run_at_load() -> bool:
-    """Check if the unified plist has RunAtLoad set to true."""
-    if not PLIST_PATH.exists():
-        return False
-    try:
-        content = PLIST_PATH.read_text()
-        # Look for <key>RunAtLoad</key> followed by <true/>
-        m = re.search(r"<key>RunAtLoad</key>\s*<(true|false)/>", content)
-        return m is not None and m.group(1) == "true"
-    except Exception:
-        return False
+def is_run_at_load() -> str:
+    """Check if RunAtLoad is true for headless and GUI plists."""
+    headless_enabled = False
+    if PLIST_PATH.exists():
+        try:
+            content = PLIST_PATH.read_text()
+            m = re.search(r"<key>RunAtLoad</key>\s*<(true|false)/>", content)
+            if m and m.group(1) == "true":
+                headless_enabled = True
+        except Exception:
+            pass
+
+    gui_enabled = False
+    if GUI_PLIST_PATH.exists():
+        try:
+            content = GUI_PLIST_PATH.read_text()
+            m = re.search(r"<key>RunAtLoad</key>\s*<(true|false)/>", content)
+            if m and m.group(1) == "true":
+                gui_enabled = True
+        except Exception:
+            pass
+
+    if headless_enabled and gui_enabled:
+        return "enabled (headless & GUI)"
+    elif headless_enabled:
+        return "enabled (headless)"
+    elif gui_enabled:
+        return "enabled (GUI)"
+    return "disabled"
 
 
 def set_run_at_load(
     enabled: bool,
-    headless: bool = False,
     endpoints: list[str] | None = None,
     providers: list[str] | None = None,
     model: str = "AUTO",
 ):
-    """Toggle RunAtLoad and persist startup mode settings."""
+    """Toggle RunAtLoad for the headless service and persist settings."""
     if enabled:
         # 1. Update/Write the persistent config
-        save_config(headless=headless, endpoints=endpoints, providers=providers, model=model)
+        save_config(endpoints=endpoints, providers=providers, model=model)
 
         # 2. Ensure the static plist is installed
         install_service(run_at_load=True)

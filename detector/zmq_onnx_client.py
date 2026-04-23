@@ -114,8 +114,6 @@ class ZmqOnnxClient:
         self._initialize_zmq()
 
         # Register signal handlers for graceful shutdown
-        import signal
-
         try:
             signal.signal(signal.SIGTERM, self._handle_signal)
             signal.signal(signal.SIGINT, self._handle_signal)
@@ -686,8 +684,6 @@ class ZmqOnnxClient:
             try:
                 sys.stdout.flush()
                 sys.stderr.flush()
-                import os
-
                 os.fsync(sys.stdout.fileno())
             except (OSError, ValueError, AttributeError):
                 pass
@@ -830,8 +826,6 @@ class ZmqOnnxClient:
             try:
                 for handler in logging.getLogger().handlers:
                     handler.flush()
-                import os
-                import sys
 
                 sys.stdout.flush()
                 sys.stderr.flush()
@@ -847,8 +841,6 @@ class ZmqOnnxClient:
                     pass
 
                 # Brief sleep to allow kernel to finish the operation
-                import time
-
                 time.sleep(0.1)
             except Exception:
                 pass

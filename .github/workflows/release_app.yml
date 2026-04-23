@@ -5,8 +5,27 @@ on:
     types: [published]
 
 jobs:
-  build-macos-app:
-    name: Build .app and Upload Asset
+  build-cli:
+    name: Build CLI tarball
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync
+      - name: Build CLI binary
+        run: make build
+      - name: Package CLI tarball
+        run: tar -czf build/detector-macos-arm64.tar.gz -C build detector
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: build/detector-macos-arm64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    name: Build macOS App DMG
     runs-on: macos-latest
     permissions:
       contents: write
@@ -15,7 +34,8 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: brew install create-dmg
       - run: uv sync
-      - run: make build
+      - name: Build macOS App
+        run: make build-macos
       - uses: softprops/action-gh-release@v2
         with:
           files: build/FrigateDetector.dmg

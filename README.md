@@ -25,7 +25,7 @@ An optimized object detection client for Frigate that leverages Apple Silicon's 
 No display required. After copying the app to your server, use the embedded CLI binary:
 ```bash
 # Enable the background daemon
-/Applications/FrigateDetector.app/Contents/MacOS/detector startup enable --headless
+/Applications/FrigateDetector.app/Contents/MacOS/detector startup enable
 
 # Check status
 /Applications/FrigateDetector.app/Contents/MacOS/detector status
@@ -67,8 +67,7 @@ The `detector` CLI provides complete control over the detector service:
 | `detector logs -f` | Tail live log output |
 | `detector logs --err` | Show error log |
 | `detector models` | List installed models with sizes |
-| `detector startup enable` | Enable auto-start on login (GUI mode) |
-| `detector startup enable --headless` | Enable auto-start on login (headless mode) |
+| `detector startup enable` | Enable auto-start on login |
 | `detector startup disable` | Disable auto-start on login |
 | `detector debug enable` | Enable verbose debug logging |
 | `detector debug disable` | Disable verbose debug logging |
@@ -204,7 +203,8 @@ make format      # Auto-format with ruff
 make typecheck   # Run pyright type checker
 make check       # Run lint + typecheck + test
 make smoke-test  # Run ZMQ connection smoke test
-make build       # Build FrigateDetector.app + DMG
+make build       # Build standalone CLI binary
+make build-macos # Build full FrigateDetector.app + DMG
 ```
 
 ## Integration with Frigate

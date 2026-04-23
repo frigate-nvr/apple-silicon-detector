@@ -1,7 +1,7 @@
 UV ?= $(shell command -v uv || echo ~/.local/bin/uv)
 DETECTOR := $(UV) run detector
 
-.PHONY: help install clean run start test lint format typecheck check smoke-test build macos
+.PHONY: help install clean run start test lint format typecheck check smoke-test build build-macos
 
 help:
 	@echo "Usage: make [target]"
@@ -18,7 +18,8 @@ help:
 	@echo "  check             - Run lint, typecheck, and test"
 	@echo "  smoke-test        - Run ZMQ connection smoke test"
 	@echo ""
-	@echo "  build             - Build the macOS App"
+	@echo "  build             - Build the standalone CLI binary"
+	@echo "  build-macos       - Build the macOS App (CLI + GUI + DMG)"
 	@echo "  clean             - Remove all build artifacts, virtualenv, and caches"
 
 install:
@@ -40,13 +41,15 @@ format:
 typecheck:
 	$(UV) run pyright
 
-check: 
-	lint typecheck test
+check: lint typecheck test
 
 smoke-test:
 	$(UV) run scripts/zmq_smoke_test.py
 
 build:
+	./macos/build/build_cli.sh
+
+build-macos:
 	./macos/build/build_app.sh
 
 clean:

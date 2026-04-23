@@ -12,7 +12,6 @@ class TestServiceManager(unittest.TestCase):
         self.assertIn(service_manager.SERVICE_LABEL, plist)
         # Should contain standard invocation
         self.assertIn("--service", plist)
-        self.assertIn("--startup", plist)
 
     def test_log_paths(self):
         out_p, err_p = service_manager.get_log_paths()
@@ -25,7 +24,7 @@ class TestServiceManager(unittest.TestCase):
             pid=None,
             uptime=None,
             endpoints=["tcp://0.0.0.0:5555"],
-            startup_enabled=False,
+            startup_enabled="disabled",
             log_path=Path("log"),
             err_log_path=Path("err"),
             models_dir=Path("models"),
