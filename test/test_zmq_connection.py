@@ -3,10 +3,11 @@
 Simple ZMQ connection test script to verify connectivity.
 """
 
-import zmq
 import json
-import numpy as np
 import logging
+
+import numpy as np
+import zmq
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

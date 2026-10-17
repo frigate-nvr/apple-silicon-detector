@@ -19,13 +19,11 @@ import json
 import logging
 import os
 import time
-from typing import List, Optional, Tuple
 
 import numpy as np
 import onnxruntime as ort
 import zmq
-
-from model_util import post_process_yolo, post_process_rfdetr, post_process_dfine
+from model_util import post_process_dfine, post_process_rfdetr, post_process_yolo
 
 # Configure logging
 logging.basicConfig(
@@ -42,8 +40,8 @@ class ZmqOnnxClient:
     def __init__(
         self,
         endpoint: str = "ipc:///tmp/cache/zmq_detector",
-        model_path: Optional[str] = "AUTO",
-        providers: Optional[List[str]] = None,
+        model_path: str | None = "AUTO",
+        providers: list[str] | None = None,
     ):
         """
         Initialize the ZMQ ONNX client.
@@ -150,7 +148,7 @@ class ZmqOnnxClient:
     def _create_onnx_session(
         self,
         model_path: str,
-    ) -> Optional[ort.InferenceSession]:
+    ) -> ort.InferenceSession | None:
         """
         Create an ONNX Runtime session using the configured execution providers.
 
@@ -202,7 +200,7 @@ class ZmqOnnxClient:
             logger.error(f"Failed to create ONNX session: {e}")
             return None
 
-    def _initialize_onnx_session(self) -> Optional[ort.InferenceSession]:
+    def _initialize_onnx_session(self) -> ort.InferenceSession | None:
         """
         Initialize ONNX Runtime session using the configured execution providers.
 
@@ -214,6 +212,28 @@ class ZmqOnnxClient:
             return None
 
         return self._create_onnx_session(self.model_path)
+
+    def _is_valid_model_name(self, model_name) -> bool:
+        """
+        Check that a client-supplied model name is a plain file name.
+
+        Model names arrive over the socket and are joined onto the models
+        directory, so anything containing a path separator, an absolute path,
+        or a leading dot (".", "..", hidden files) is rejected to keep reads
+        and writes inside the models directory.
+
+        Args:
+            model_name: Model name from the request header
+
+        Returns:
+            True if the name is safe to use, False otherwise
+        """
+        return (
+            isinstance(model_name, str)
+            and model_name == os.path.basename(model_name)
+            and not model_name.startswith(".")
+            and "\0" not in model_name
+        )
 
     def _check_model_exists(self, model_name: str) -> bool:
         """
@@ -287,7 +307,7 @@ class ZmqOnnxClient:
             logger.error(f"Failed to save model {model_name}: {e}")
             return False
 
-    def _decode_request(self, frames: List[bytes]) -> Tuple[np.ndarray, dict]:
+    def _decode_request(self, frames: list[bytes]) -> tuple[np.ndarray, dict]:
         """
         Decode the incoming request frames.
 
@@ -399,7 +419,7 @@ class ZmqOnnxClient:
             logger.error(f"ONNX inference failed: {e}")
             return self.zero_result
 
-    def _extract_input_hw(self, header: dict) -> Tuple[int, int]:
+    def _extract_input_hw(self, header: dict) -> tuple[int, int]:
         """
         Extract (width, height) from the header and/or tensor shape, supporting
         NHWC/NCHW as well as 3D/4D inputs. Falls back to 320x320 if unknown.
@@ -453,7 +473,7 @@ class ZmqOnnxClient:
         logger.debug("Falling back to default input size (320x320)")
         return 320, 320
 
-    def _build_response(self, result: np.ndarray) -> List[bytes]:
+    def _build_response(self, result: np.ndarray) -> list[bytes]:
         """
         Build the response message.
 
@@ -489,7 +509,7 @@ class ZmqOnnxClient:
             result_bytes = self.zero_result.tobytes(order="C")
             return [header_bytes, result_bytes]
 
-    def _handle_model_request(self, header: dict) -> List[bytes]:
+    def _handle_model_request(self, header: dict) -> list[bytes]:
         """
         Handle model availability request.
 
@@ -504,6 +524,10 @@ class ZmqOnnxClient:
         if not model_name:
             logger.error("Model request missing model_name")
             return self._build_error_response("Model request missing model_name")
+
+        if not self._is_valid_model_name(model_name):
+            logger.error(f"Model request has invalid model_name: {model_name!r}")
+            return self._build_error_response("Model request has invalid model_name")
 
         logger.info(f"Model availability request for: {model_name}")
 
@@ -548,7 +572,7 @@ class ZmqOnnxClient:
 
         return [json.dumps(response_header).encode("utf-8")]
 
-    def _handle_model_data(self, header: dict, model_data: bytes) -> List[bytes]:
+    def _handle_model_data(self, header: dict, model_data: bytes) -> list[bytes]:
         """
         Handle model data transfer.
 
@@ -564,6 +588,10 @@ class ZmqOnnxClient:
         if not model_name:
             logger.error("Model data missing model_name")
             return self._build_error_response("Model data missing model_name")
+
+        if not self._is_valid_model_name(model_name):
+            logger.error(f"Model data has invalid model_name: {model_name!r}")
+            return self._build_error_response("Model data has invalid model_name")
 
         logger.info(f"Received model data for: {model_name}")
 
@@ -593,7 +621,7 @@ class ZmqOnnxClient:
 
         return [json.dumps(response_header).encode("utf-8")]
 
-    def _build_error_response(self, error_msg: str) -> List[bytes]:
+    def _build_error_response(self, error_msg: str) -> list[bytes]:
         """Build an error response message."""
         error_header = {"error": error_msg}
         return [json.dumps(error_header).encode("utf-8")]
@@ -715,8 +743,12 @@ def main():
     parser = argparse.ArgumentParser(description="ZMQ TCP ONNX Runtime Client")
     parser.add_argument(
         "--endpoint",
-        default="tcp://*:5555",
-        help="ZMQ TCP endpoint (default: tcp://*:5555)",
+        default="tcp://127.0.0.1:5555",
+        help=(
+            "ZMQ TCP endpoint (default: tcp://127.0.0.1:5555, reachable only from "
+            "this Mac and its Docker containers). Use tcp://*:5555 to accept "
+            "connections from other hosts; the socket has no authentication."
+        ),
     )
     parser.add_argument(
         "--model",
