@@ -69,9 +69,15 @@ make run MODEL=/path/to/your/model.onnx
 ```
 
 ### Custom Endpoints
+By default the detector listens on `tcp://127.0.0.1:5555`, which is reachable from this Mac only. That includes Frigate running in Docker on the same Mac, which connects through `host.docker.internal`.
+
+If Frigate runs on a different machine, bind to all interfaces (or to a specific interface address):
 ```bash
-make run MODEL=/path/to/your/model.onnx ENDPOINT="tcp://*:5555"
+make run ENDPOINT="tcp://*:5555"
 ```
+
+> [!WARNING]
+> The detector's socket has no authentication. Anything that can reach the port can send it models and inference requests. Only expose it on a trusted network, and ideally firewall the port so only the Frigate host can connect.
 
 ### Custom Execution Providers
 ```bash
@@ -90,7 +96,7 @@ from detector.zmq_onnx_client import ZmqOnnxClient
 
 # Create client instance
 client = ZmqOnnxClient(
-    endpoint="tcp://*:5555",
+    endpoint="tcp://127.0.0.1:5555",
     model_path="/path/to/your/model.onnx",
     providers=["CoreMLExecutionProvider", "CPUExecutionProvider"]
 )

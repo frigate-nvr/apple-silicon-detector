@@ -215,6 +215,28 @@ class ZmqOnnxClient:
 
         return self._create_onnx_session(self.model_path)
 
+    def _is_valid_model_name(self, model_name) -> bool:
+        """
+        Check that a client-supplied model name is a plain file name.
+
+        Model names arrive over the socket and are joined onto the models
+        directory, so anything containing a path separator, an absolute path,
+        or a leading dot (".", "..", hidden files) is rejected to keep reads
+        and writes inside the models directory.
+
+        Args:
+            model_name: Model name from the request header
+
+        Returns:
+            True if the name is safe to use, False otherwise
+        """
+        return (
+            isinstance(model_name, str)
+            and model_name == os.path.basename(model_name)
+            and not model_name.startswith(".")
+            and "\0" not in model_name
+        )
+
     def _check_model_exists(self, model_name: str) -> bool:
         """
         Check if a model exists in the models directory.
@@ -505,6 +527,10 @@ class ZmqOnnxClient:
             logger.error("Model request missing model_name")
             return self._build_error_response("Model request missing model_name")
 
+        if not self._is_valid_model_name(model_name):
+            logger.error(f"Model request has invalid model_name: {model_name!r}")
+            return self._build_error_response("Model request has invalid model_name")
+
         logger.info(f"Model availability request for: {model_name}")
 
         if self._check_model_exists(model_name):
@@ -564,6 +590,10 @@ class ZmqOnnxClient:
         if not model_name:
             logger.error("Model data missing model_name")
             return self._build_error_response("Model data missing model_name")
+
+        if not self._is_valid_model_name(model_name):
+            logger.error(f"Model data has invalid model_name: {model_name!r}")
+            return self._build_error_response("Model data has invalid model_name")
 
         logger.info(f"Received model data for: {model_name}")
 
@@ -715,8 +745,12 @@ def main():
     parser = argparse.ArgumentParser(description="ZMQ TCP ONNX Runtime Client")
     parser.add_argument(
         "--endpoint",
-        default="tcp://*:5555",
-        help="ZMQ TCP endpoint (default: tcp://*:5555)",
+        default="tcp://127.0.0.1:5555",
+        help=(
+            "ZMQ TCP endpoint (default: tcp://127.0.0.1:5555, reachable only from "
+            "this Mac and its Docker containers). Use tcp://*:5555 to accept "
+            "connections from other hosts; the socket has no authentication."
+        ),
     )
     parser.add_argument(
         "--model",
