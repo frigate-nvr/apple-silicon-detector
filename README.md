@@ -13,6 +13,7 @@ An optimized object detection client for Frigate that leverages Apple Silicon's 
 ## Quick Start
 
 ### Option A: macOS App (no terminal required)
+
 1. Download the latest `FrigateDetector.app.zip` from the Releases page.
 2. Unzip it and open `FrigateDetector.app` (first run: right‑click → Open to bypass Gatekeeper).
 3. A Terminal window will appear and automatically:
@@ -21,6 +22,7 @@ An optimized object detection client for Frigate that leverages Apple Silicon's 
    - start the detector with `--model AUTO`
 
 ### Option B: Makefile
+
 ```bash
 make install
 make run
@@ -47,7 +49,9 @@ The following models are supported by this detector:
 | M4                 |             |                 |               |
 
 ### Model Configuration
+
 The detector uses the model that Frigate configures:
+
 1. Frigate automatically loads and configures the model via ZMQ
 2. The detector receives model information from Frigate's automatic model loading
 3. No manual model selection required - works with Frigate's existing model management
@@ -64,14 +68,17 @@ For implementation details, see the [detector README](detector/README.md).
 ## Advanced Configuration
 
 ### Custom Model Selection
+
 ```bash
 make run MODEL=/path/to/your/model.onnx
 ```
 
 ### Custom Endpoints
+
 By default the detector listens on `tcp://127.0.0.1:5555`, which is reachable from this Mac only. That includes Frigate running in Docker on the same Mac, which connects through `host.docker.internal`.
 
 If Frigate runs on a different machine, bind to all interfaces (or to a specific interface address):
+
 ```bash
 make run ENDPOINT="tcp://*:5555"
 ```
@@ -80,11 +87,13 @@ make run ENDPOINT="tcp://*:5555"
 > The detector's socket has no authentication. Anything that can reach the port can send it models and inference requests. Only expose it on a trusted network, and ideally firewall the port so only the Frigate host can connect.
 
 ### Custom Execution Providers
+
 ```bash
 make run MODEL=/path/to/your/model.onnx PROVIDERS="CoreMLExecutionProvider CPUExecutionProvider"
 ```
 
 ### Verbose Logging
+
 ```bash
 make run MODEL=/path/to/your/model.onnx VERBOSE=1
 ```
@@ -108,6 +117,7 @@ client.start_server()
 ## Error Handling
 
 The client includes comprehensive error handling:
+
 - **ZMQ Errors**: Automatic socket reset and error response
 - **ONNX Errors**: Fallback to zero results with error logging
 - **Decoding Errors**: Graceful handling of malformed requests
@@ -123,13 +133,16 @@ The client includes comprehensive error handling:
 ## Troubleshooting
 
 ### Common Issues
+
 - **Permission Denied**: Ensure the IPC endpoint directory has proper permissions (`/tmp/cache/`)
 - **Model Loading Failed**: Verify ONNX model files are in the `models/` directory
 - **ZMQ Bind Failed**: Ensure the endpoint is not already in use by another process
 - **Package Not Found**: Run `make reinstall` to recreate the virtual environment
 
 ### Debug Mode
+
 Enable verbose logging for detailed operation information:
+
 ```bash
 make run VERBOSE=1
 ```
